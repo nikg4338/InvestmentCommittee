@@ -1,0 +1,52 @@
+# Core ML and Data Science
+numpy
+pandas
+scikit-learn
+xgboost
+tensorflow
+torch
+lightgbm
+
+# Trading and Financial Data
+alpaca-trade-api
+yfinance
+quantlib
+py-vollib
+
+# Technical Analysis
+ta-lib
+ta
+pandas-ta
+
+# LLM Integration
+openai
+anthropic
+google-generativeai
+
+# Data Storage and Processing
+sqlalchemy
+psycopg2-binary
+redis
+
+# Utilities
+python-dotenv
+pydantic
+loguru
+schedule
+requests
+beautifulsoup4
+
+# Testing
+pytest
+pytest-cov
+mock
+
+# Jupyter and Analysis
+jupyter
+matplotlib
+seaborn
+plotly
+
+# Configuration and Environment
+pyyaml
+configparser

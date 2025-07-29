@@ -1,0 +1,13 @@
+{
+  "hidden1": 256,
+  "hidden2": 64,
+  "dropout": 0.2550309751349766,
+  "learning_rate": 0.0010547434125495049,
+  "batch_size": 64,
+  "epochs": 11,
+  "final_train_loss": null,
+  "final_val_loss": null,
+  "final_val_accuracy": null,
+  "threshold": 0.25,
+  "threshold_score": 0.7000937207122774
+}

@@ -1,0 +1,14 @@
+{
+  "completed_batches": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "last_updated": "2025-07-28T17:51:14.195507",
+  "last_batch_file": "filtered_iex_batches.json"
+}
