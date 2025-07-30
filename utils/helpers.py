@@ -10,7 +10,8 @@ import logging
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Any, Dict, Optional, List, Union
+from typing import Any, Dict, Optional, List, Union, Tuple
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,137 @@ def get_iex_batch_info(batch_file: str = "filtered_iex_batches.json") -> Dict[st
     except Exception as e:
         logger.error(f"Error loading batch info: {e}")
         raise
+
+def compute_classification_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> Dict[str, float]:
+    """
+    Compute classification metrics for binary classification.
+    
+    Args:
+        y_true: True labels (0 or 1)
+        y_pred_proba: Predicted probabilities for positive class
+        
+    Returns:
+        Dictionary containing accuracy, precision, recall, f1, and roc_auc scores
+    """
+    try:
+        # Convert probabilities to binary predictions (extremely low threshold for extreme imbalance)
+        threshold = 0.001  # Very aggressive threshold to capture positive cases
+        y_pred = (y_pred_proba >= threshold).astype(int)
+        
+        metrics = {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(y_true, y_pred, zero_division=0),
+            'recall': recall_score(y_true, y_pred, zero_division=0),
+            'f1': f1_score(y_true, y_pred, zero_division=0),
+            'roc_auc': roc_auc_score(y_true, y_pred_proba) if len(np.unique(y_true)) > 1 else 0.0
+        }
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error computing classification metrics: {e}")
+        return {
+            'accuracy': 0.0,
+            'precision': 0.0,
+            'recall': 0.0,
+            'f1': 0.0,
+            'roc_auc': 0.0
+        }
+
+
+def find_optimal_threshold(y_true: np.ndarray, y_pred_proba: np.ndarray, metric: str = 'f1') -> Tuple[float, float]:
+    """
+    Find optimal classification threshold based on validation set.
+    
+    Args:
+        y_true: True binary labels
+        y_pred_proba: Predicted probabilities for positive class
+        metric: Metric to optimize ('f1', 'youden', 'precision', 'recall')
+        
+    Returns:
+        Tuple of (optimal_threshold, best_metric_value)
+    """
+    try:
+        if len(np.unique(y_true)) < 2:
+            logger.warning("Only one class present in y_true, returning default threshold")
+            return 0.5, 0.0
+        
+        # Generate threshold candidates
+        thresholds = np.linspace(0.001, 0.999, 100)
+        best_score = -1.0
+        best_threshold = 0.5
+        
+        for threshold in thresholds:
+            y_pred = (y_pred_proba >= threshold).astype(int)
+            
+            if metric == 'f1':
+                score = f1_score(y_true, y_pred, zero_division=0)
+            elif metric == 'youden':
+                # Youden's J statistic = Sensitivity + Specificity - 1
+                recall = recall_score(y_true, y_pred, zero_division=0)
+                tn = ((y_true == 0) & (y_pred == 0)).sum()
+                fp = ((y_true == 0) & (y_pred == 1)).sum()
+                specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+                score = recall + specificity - 1
+            elif metric == 'precision':
+                score = precision_score(y_true, y_pred, zero_division=0)
+            elif metric == 'recall':
+                score = recall_score(y_true, y_pred, zero_division=0)
+            else:
+                raise ValueError(f"Unknown metric: {metric}")
+            
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+        
+        return best_threshold, best_score
+        
+    except Exception as e:
+        logger.error(f"Error finding optimal threshold: {e}")
+        return 0.5, 0.0
+
+
+def compute_classification_metrics_with_threshold(y_true: np.ndarray, y_pred_proba: np.ndarray, 
+                                                threshold: Optional[float] = None) -> Dict[str, float]:
+    """
+    Compute classification metrics with optimal or specified threshold.
+    
+    Args:
+        y_true: True labels (0 or 1)
+        y_pred_proba: Predicted probabilities for positive class
+        threshold: Custom threshold, if None will find optimal F1 threshold
+        
+    Returns:
+        Dictionary containing metrics and optimal threshold used
+    """
+    try:
+        # Find optimal threshold if not provided
+        if threshold is None:
+            threshold, _ = find_optimal_threshold(y_true, y_pred_proba, metric='f1')
+        
+        y_pred = (y_pred_proba >= threshold).astype(int)
+        
+        metrics = {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(y_true, y_pred, zero_division=0),
+            'recall': recall_score(y_true, y_pred, zero_division=0),
+            'f1': f1_score(y_true, y_pred, zero_division=0),
+            'roc_auc': roc_auc_score(y_true, y_pred_proba) if len(np.unique(y_true)) > 1 else 0.0,
+            'threshold': threshold
+        }
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error computing classification metrics with threshold: {e}")
+        return {
+            'accuracy': 0.0,
+            'precision': 0.0,
+            'recall': 0.0,
+            'f1': 0.0,
+            'roc_auc': 0.0,
+            'threshold': 0.5
+        }
 
 # Example/test block (remove in production)
 if __name__ == "__main__":

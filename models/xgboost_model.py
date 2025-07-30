@@ -52,9 +52,21 @@ class XGBoostModel:
         if not XGBOOST_AVAILABLE or self.model is None:
             logger.warning("xgboost not available. Training skipped.")
             return
+        
+        # Calculate class imbalance ratio for scale_pos_weight
+        n_neg = (y == 0).sum()
+        n_pos = (y == 1).sum()
+        if n_pos > 0:
+            scale_pos_weight = n_neg / n_pos
+        else:
+            scale_pos_weight = 1.0
+        
+        # Update model with scale_pos_weight
+        self.model.set_params(scale_pos_weight=scale_pos_weight)
+        
         self.model.fit(X, y)
         self.is_trained = True
-        logger.info("XGBoost model trained.")
+        logger.info(f"XGBoost model trained with scale_pos_weight={scale_pos_weight:.2f}")
     
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
         """
@@ -70,6 +82,31 @@ class XGBoostModel:
             logger.warning("xgboost not available. Returning zeros.")
             return np.zeros(len(X))
         return self.model.predict(X)
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """
+        Predict class probabilities using the trained model.
+        
+        Args:
+            X: Feature matrix
+            
+        Returns:
+            Array of shape (n_samples, 2) with probabilities for each class
+        """
+        if not XGBOOST_AVAILABLE or self.model is None:
+            logger.warning("xgboost not available. Returning dummy probabilities.")
+            # Return dummy probabilities (50/50 for each class)
+            n_samples = len(X)
+            return np.column_stack([np.full(n_samples, 0.5), np.full(n_samples, 0.5)])
+        
+        try:
+            probabilities = self.model.predict_proba(X)
+            return probabilities
+        except Exception as e:
+            logger.error(f"Error in predict_proba: {e}")
+            # Fallback to dummy probabilities
+            n_samples = len(X)
+            return np.column_stack([np.full(n_samples, 0.5), np.full(n_samples, 0.5)])
 
     def predict_signal(self, features: Dict[str, Any]) -> Tuple[str, float, Dict[str, Any]]:
         """
