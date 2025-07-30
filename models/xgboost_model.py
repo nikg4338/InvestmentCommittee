@@ -33,6 +33,7 @@ class XGBoostModel:
             "n_estimators": 100,
             "subsample": 0.8,
             "colsample_bytree": 0.8,
+            "eval_metric": "aucpr",  # Updated eval_metric for PR-AUC
             "seed": 42
         }
         self.model = None

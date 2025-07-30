@@ -90,8 +90,8 @@ class CatBoostModel(BaseModel):
             'random_seed': random_seed,
             'logging_level': logging_level,
             'loss_function': 'Logloss',
-            'eval_metric': 'AUC',
-            'auto_class_weights': 'Balanced',  # Handle class imbalance - use auto_class_weights instead
+            'eval_metric': 'F1',  # Updated eval_metric for F1 score
+            'auto_class_weights': 'Balanced',  # Handle class imbalance
             **kwargs
         }
         

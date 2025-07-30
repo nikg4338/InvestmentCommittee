@@ -95,6 +95,7 @@ class LightGBMModel(BaseModel):
             'verbose': verbose,
             'random_state': random_state,
             'is_unbalance': True,  # Handle class imbalance
+            'eval_metric': 'average_precision',  # Updated eval_metric for PR-AUC
             **kwargs
         }
         
