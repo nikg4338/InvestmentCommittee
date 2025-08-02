@@ -109,11 +109,18 @@ CHART_DPI = DEFAULT_CHART_DPI
 # =============================================================================
 
 # Timing and logging utility
-def log_timing(operation_name: str, start_time: float) -> None:
+def log_timing(operation_name: str, start_time: float = None, enable: bool = None) -> None:
     """Log the duration of an operation if timing is enabled."""
-    if ENABLE_TIMING:
-        duration = time.time() - start_time
-        logger.info(f"  ✔️ {operation_name} completed in {duration:.1f}s")
+    # Use global ENABLE_TIMING if enable parameter not provided
+    timing_enabled = enable if enable is not None else ENABLE_TIMING
+    
+    if timing_enabled:
+        if start_time is not None:
+            duration = time.time() - start_time
+            logger.info(f"  ✔️ {operation_name} completed in {duration:.1f}s")
+        else:
+            # Simple log message without timing
+            logger.info(f"  ✔️ {operation_name}")
 
 # Ensure log directory exists before configuring logging
 os.makedirs('logs', exist_ok=True)
@@ -586,22 +593,9 @@ def clean_data_for_ml(X: pd.DataFrame) -> pd.DataFrame:
 
 def prepare_training_data(df: pd.DataFrame, feature_columns: List[str], target_column: str = 'target') -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Prepare training and test splits using group‑based splitting by ticker.
-
-    Rows with NaN values in features or target are dropped.  If a
-    ``ticker`` column is present, a ``GroupShuffleSplit`` is used to
-    prevent leakage across tickers.  Otherwise, a stratified train/test
-    split is performed.
-
-    Args:
-        df: DataFrame containing features and target
-        feature_columns: List of feature column names to use for training
-        target_column: Name of the target column (default ``'target'``)
-
-    Returns:
-        ``(X_train, X_test, y_train, y_test)`` – the split feature and label sets
+    Prepare training and test splits with guaranteed class representation in both sets.
     """
-    logger.info("Preparing training data with group‑based splitting…")
+    logger.info("Preparing training data with improved class balance handling...")
     X = df[feature_columns].copy()
     y = df[target_column].copy()
     X_clean = clean_data_for_ml(X)
@@ -614,39 +608,75 @@ def prepare_training_data(df: pd.DataFrame, feature_columns: List[str], target_c
     class_counts = y_final.value_counts()
     logger.info(f"Total class distribution: {class_counts.to_dict()}")
     
-    # If we have very few positive examples, use stratified split to ensure both classes in test
-    if class_counts.min() < 10:
-        logger.info("Few minority samples detected, using stratified split to ensure both classes in test set")
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_final, y_final, test_size=0.2, random_state=42, stratify=y_final
-        )
-    # Group split by ticker if available and we have enough samples per class
-    elif 'ticker' in df_final.columns:
-        try:
-            gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
-            train_idx, test_idx = next(gss.split(X_final, y_final, groups=df_final['ticker']))
-            X_train, X_test = X_final.iloc[train_idx], X_final.iloc[test_idx]
-            y_train, y_test = y_final.iloc[train_idx], y_final.iloc[test_idx]
-            
-            # Check if test set has both classes
-            test_class_counts = y_test.value_counts()
-            if len(test_class_counts) < 2:
-                logger.warning("Group split resulted in test set with only one class, falling back to stratified split")
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_final, y_final, test_size=0.2, random_state=42, stratify=y_final
-                )
-        except Exception as e:
-            logger.warning(f"Group split failed: {e}, using stratified split")
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_final, y_final, test_size=0.2, random_state=42, stratify=y_final
-            )
+    # If we have very few total samples of minority class, use a smaller test size
+    minority_count = class_counts.min()
+    if minority_count < 4:
+        logger.warning(f"Very few minority samples ({minority_count}). Using minimal test set.")
+        test_size = max(0.1, 1/len(y_final))  # At least 1 sample in test, max 10%
+    elif minority_count < 10:
+        test_size = 0.15  # Smaller test set to preserve minority samples
     else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_final, y_final, test_size=0.2, random_state=42, stratify=y_final
-        )
+        test_size = 0.2   # Standard test size
+    
+    # Force stratified split to ensure both classes in both sets
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_final, y_final, 
+                test_size=test_size, 
+                random_state=42 + attempt,  # Different seed for each attempt
+                stratify=y_final
+            )
+            
+            # Verify both sets have both classes
+            train_classes = set(y_train.unique())
+            test_classes = set(y_test.unique())
+            
+            if len(train_classes) >= 2 and len(test_classes) >= 2:
+                logger.info(f"✅ Successful split on attempt {attempt + 1}")
+                logger.info(f"   Train classes: {sorted(train_classes)}")
+                logger.info(f"   Test classes: {sorted(test_classes)}")
+                logger.info(f"   Train distribution: {y_train.value_counts().to_dict()}")
+                logger.info(f"   Test distribution: {y_test.value_counts().to_dict()}")
+                return X_train, X_test, y_train, y_test
+            else:
+                logger.warning(f"Attempt {attempt + 1}: Split resulted in missing classes")
+                
+        except ValueError as e:
+            logger.warning(f"Attempt {attempt + 1}: Stratified split failed: {e}")
+            # If stratify fails, reduce test size further
+            test_size = max(0.05, test_size * 0.8)
+    
+    # If all stratified attempts fail, use manual splitting to guarantee class representation
+    logger.warning("Stratified splitting failed. Using manual class-preserving split.")
+    
+    # Separate by class
+    class_0_indices = y_final[y_final == 0].index
+    class_1_indices = y_final[y_final == 1].index
+    
+    # Ensure at least 1 sample of each class in test set
+    n_test_class_0 = max(1, int(len(class_0_indices) * test_size))
+    n_test_class_1 = max(1, int(len(class_1_indices) * test_size))
+    
+    # Random split for each class
+    np.random.seed(42)
+    test_indices_0 = np.random.choice(class_0_indices, size=n_test_class_0, replace=False)
+    test_indices_1 = np.random.choice(class_1_indices, size=n_test_class_1, replace=False)
+    
+    test_indices = np.concatenate([test_indices_0, test_indices_1])
+    train_indices = np.setdiff1d(y_final.index, test_indices)
+    
+    X_train = X_final.loc[train_indices]
+    X_test = X_final.loc[test_indices]
+    y_train = y_final.loc[train_indices]
+    y_test = y_final.loc[test_indices]
+    
+    logger.info(f"✅ Manual split completed:")
+    logger.info(f"   Train distribution: {y_train.value_counts().to_dict()}")
+    logger.info(f"   Test distribution: {y_test.value_counts().to_dict()}")
     
     return X_train, X_test, y_train, y_test
-
 
 def train_committee_models_advanced(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, y_test: pd.Series) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
     """
@@ -767,20 +797,42 @@ def train_committee_models_advanced(X_train: pd.DataFrame, y_train: pd.Series, X
                 logger.error(f"      ❌ Cannot extract sklearn estimator from {model_name}")
                 continue
             
-            # Wrap sklearn estimator in CalibratedClassifierCV with configured calibration
+            # Wrap sklearn estimator in CalibratedClassifierCV with adaptive calibration
+            # Adaptive CV folds based on available data after SMOTEENN
+            min_class_samples = min(y_res.value_counts()) if len(y_res.value_counts()) > 1 else len(y_res)
+            adaptive_cv = min(DEFAULT_CALIBRATION_CV, max(2, min_class_samples // 2))
+            
             cal_model = CalibratedClassifierCV(
                 estimator=sklearn_estimator,  # Use underlying sklearn estimator
                 method=DEFAULT_CALIBRATION_METHOD,
-                cv=DEFAULT_CALIBRATION_CV
+                cv=adaptive_cv
             )
+            
+            logger.info(f"      📊 Using {adaptive_cv}-fold calibration CV for {model_name}")
             
             # Train calibrated model on oversampled data
             try:
-                cal_model.fit(X_res, y_res)
+                # Check if we have enough samples for calibration
+                if len(y_res) < 4:  # Need at least 4 samples for 2-fold CV
+                    logger.warning(f"      ⚠️  Too few samples ({len(y_res)}) for calibration. Using base model.")
+                    # Train base model directly without calibration
+                    sklearn_estimator.fit(X_res, y_res)
+                    cal_model = sklearn_estimator
+                else:
+                    cal_model.fit(X_res, y_res)
+                
                 logger.info(f"      ✅ {model_name} calibrated model trained")
             except Exception as e:
                 logger.error(f"      ❌ Failed to train {model_name}: {e}")
-                continue
+                # Try with base model as fallback
+                try:
+                    logger.warning(f"      🔄 Falling back to base model for {model_name}")
+                    sklearn_estimator.fit(X_res, y_res)
+                    cal_model = sklearn_estimator
+                    logger.info(f"      ✅ {model_name} base model trained (no calibration)")
+                except Exception as e2:
+                    logger.error(f"      ❌ Failed to train base model for {model_name}: {e2}")
+                    continue
             
             # Predict probabilities on validation set
             try:
@@ -791,8 +843,12 @@ def train_committee_models_advanced(X_train: pd.DataFrame, y_train: pd.Series, X
             
             # 4. Threshold tuning - find optimal threshold for this fold
             try:
-                optimal_threshold, _ = find_optimal_threshold(y_fold_val, val_proba, metric='f1')
-                logger.info(f"      🎯 {model_name} optimal threshold: {optimal_threshold:.3f}")
+                if len(y_fold_val.unique()) < 2:
+                    logger.warning(f"      ⚠️  Validation fold has only one class. Using default threshold.")
+                    optimal_threshold = 0.5
+                else:
+                    optimal_threshold, _ = find_optimal_threshold(y_fold_val, val_proba, metric='f1')
+                    logger.info(f"      🎯 {model_name} optimal threshold: {optimal_threshold:.3f}")
             except Exception as e:
                 logger.warning(f"      ⚠️  Threshold optimization failed for {model_name}: {e}")
                 optimal_threshold = 0.5
@@ -948,22 +1004,310 @@ def train_committee_models_advanced(X_train: pd.DataFrame, y_train: pd.Series, X
     return models, metrics
 
 
-def _determine_output_directory(batch_num: Any = None) -> tuple[str, str]:
+def prepare_sampler(method: str, random_state: int = DEFAULT_RANDOM_STATE):
+    """
+    Prepare sampling method for class imbalance handling.
+    
+    Args:
+        method: Sampling method ('smoteenn' or 'none')
+        random_state: Random state for reproducibility
+        
+    Returns:
+        Configured sampler or None
+    """
+    if method == 'smoteenn':
+        try:
+            from imblearn.combine import SMOTEENN
+            from imblearn.over_sampling import SMOTE
+            return SMOTEENN(random_state=random_state)
+        except ImportError:
+            logger.warning("SMOTEENN not available. Using basic balancing instead.")
+            return None
+    return None
+
+
+def evaluate_models_comprehensive(fitted_models: Dict[str, Any], thresholds: Dict[str, float], 
+                                X_test: pd.DataFrame, y_test: pd.Series, meta_model: Any = None) -> Dict[str, Dict[str, float]]:
+    """
+    Comprehensive evaluation of base models and meta-model with all metrics.
+    
+    Args:
+        fitted_models: Dictionary of trained models
+        thresholds: Dictionary of optimal thresholds per model
+        X_test: Test features
+        y_test: Test labels
+        meta_model: Trained meta-model (optional)
+        
+    Returns:
+        Dictionary of metrics for each model
+    """
+    from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
+                                f1_score, roc_auc_score, average_precision_score)
+    
+    results = {}
+    
+    # Evaluate base models
+    for name, model in fitted_models.items():
+        if name == 'meta_model':
+            continue
+            
+        try:
+            # Get predictions
+            if hasattr(model, 'predict_proba'):
+                proba = model.predict_proba(X_test)[:, 1]
+            else:
+                proba = model.predict(X_test)
+                
+            thresh = thresholds.get(name, 0.5)
+            y_pred = (proba >= thresh).astype(int)
+
+            results[name] = {
+                'accuracy': accuracy_score(y_test, y_pred),
+                'precision': precision_score(y_test, y_pred, zero_division=0),
+                'recall': recall_score(y_test, y_pred, zero_division=0),
+                'f1': f1_score(y_test, y_pred, zero_division=0),
+                'roc_auc': roc_auc_score(y_test, proba) if len(np.unique(y_test)) > 1 else 0.0,
+                'pr_auc': average_precision_score(y_test, proba) if len(np.unique(y_test)) > 1 else 0.0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error evaluating model {name}: {e}")
+            results[name] = {
+                'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0,
+                'f1': 0.0, 'roc_auc': 0.0, 'pr_auc': 0.0
+            }
+
+    # Evaluate meta-model if provided
+    if meta_model is not None:
+        try:
+            # Create meta-features from base model predictions
+            meta_X_test = pd.DataFrame({
+                name: fitted_models[name].predict_proba(X_test)[:, 1] 
+                for name in fitted_models.keys() if name != 'meta_model'
+            })
+            
+            meta_proba = meta_model.predict_proba(meta_X_test)[:, 1]
+            y_meta = (meta_proba >= 0.5).astype(int)  # Default threshold for meta-model
+            
+            results['meta_model'] = {
+                'accuracy': accuracy_score(y_test, y_meta),
+                'precision': precision_score(y_test, y_meta, zero_division=0),
+                'recall': recall_score(y_test, y_meta, zero_division=0),
+                'f1': f1_score(y_test, y_meta, zero_division=0),
+                'roc_auc': roc_auc_score(y_test, meta_proba) if len(np.unique(y_test)) > 1 else 0.0,
+                'pr_auc': average_precision_score(y_test, meta_proba) if len(np.unique(y_test)) > 1 else 0.0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error evaluating meta-model: {e}")
+            results['meta_model'] = {
+                'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0,
+                'f1': 0.0, 'roc_auc': 0.0, 'pr_auc': 0.0
+            }
+
+    return results
+
+
+def prepare_calibration_method(method: str):
+    """
+    Prepare calibration method for probability calibration.
+    
+    Args:
+        method: Calibration method ('isotonic', 'sigmoid', or 'none')
+        
+    Returns:
+        Calibration method string or None
+    """
+    if method in ('isotonic', 'sigmoid'):
+        return method
+    return None
+
+
+def train_and_calibrate_model(model, X_train, y_train, X_val, y_val, calibration_method, use_threshold=True):
+    """
+    Train and calibrate a single model with optimal threshold tuning.
+    
+    Args:
+        model: Base model instance
+        X_train: Training features
+        y_train: Training labels
+        X_val: Validation features
+        y_val: Validation labels
+        calibration_method: Calibration method ('isotonic', 'sigmoid', or None)
+        use_threshold: Whether to tune threshold
+        
+    Returns:
+        Tuple of (fitted_model, best_threshold)
+    """
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.metrics import f1_score
+    
+    # Extract the underlying sklearn estimator from our custom wrapper
+    sklearn_estimator = None
+    if hasattr(model, 'model') and model.model is not None:
+        sklearn_estimator = model.model
+    elif hasattr(model, 'pipeline') and model.pipeline is not None:
+        sklearn_estimator = model.pipeline
+    else:
+        # For custom models, try to get the sklearn-compatible estimator
+        sklearn_estimator = getattr(model, 'estimator', model)
+    
+    # Apply calibration if specified
+    if calibration_method and CALIBRATION_AVAILABLE:
+        # Adaptive CV folds based on available validation data
+        min_class_samples = min(y_val.value_counts()) if len(y_val.value_counts()) > 1 else len(y_val)
+        adaptive_cv = min(DEFAULT_CALIBRATION_CV, max(2, min_class_samples // 2))
+        
+        cal_model = CalibratedClassifierCV(
+            estimator=sklearn_estimator,
+            method=calibration_method,
+            cv=adaptive_cv
+        )
+        fitted_model = cal_model
+    else:
+        fitted_model = sklearn_estimator
+    
+    # Train the model
+    fitted_model.fit(X_train, y_train)
+    
+    # Tune threshold if requested
+    best_threshold = 0.5  # Default
+    if use_threshold:
+        val_proba = fitted_model.predict_proba(X_val)[:, 1]
+        
+        # Grid search for optimal threshold
+        thresholds = np.arange(0.1, 0.9, 0.05)
+        best_f1 = 0
+        
+        for threshold in thresholds:
+            y_pred_thresh = (val_proba >= threshold).astype(int)
+            f1 = f1_score(y_val, y_pred_thresh, zero_division=0)
+            
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+    
+    return fitted_model, best_threshold
+
+
+def export_metrics_to_csv(metrics: Dict[str, Dict[str, float]], thresholds: Dict[str, float], output_dir: str) -> None:
+    """
+    Export model metrics to CSV file.
+    
+    Args:
+        metrics: Dictionary of metrics for each model
+        thresholds: Dictionary of optimal thresholds for each model
+        output_dir: Output directory for the CSV file
+    """
+    try:
+        # Prepare data for CSV
+        csv_data = []
+        for model_name, model_metrics in metrics.items():
+            row = {
+                'model_name': model_name,
+                'f1_score': model_metrics.get('f1', 0.0),
+                'roc_auc': model_metrics.get('roc_auc', 0.0),
+                'pr_auc': model_metrics.get('pr_auc', 0.0),
+                'optimal_threshold': thresholds.get(model_name, 0.5),
+                'accuracy': model_metrics.get('accuracy', 0.0),
+                'precision': model_metrics.get('precision', 0.0),
+                'recall': model_metrics.get('recall', 0.0)
+            }
+            csv_data.append(row)
+        
+        # Create DataFrame and save to CSV
+        import pandas as pd
+        df_metrics = pd.DataFrame(csv_data)
+        
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        csv_path = os.path.join(output_dir, 'model_summary.csv')
+        df_metrics.to_csv(csv_path, index=False)
+        logger.info(f"📊 Model metrics exported to: {csv_path}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error exporting metrics to CSV: {e}")
+
+
+def save_meta_model_coefficients(meta_model, base_model_names: List[str], output_dir: str) -> None:
+    """
+    Save meta-model coefficients to CSV file.
+    
+    Args:
+        meta_model: Trained LogisticRegression meta-model
+        base_model_names: List of base model names (feature names)
+        output_dir: Output directory for the CSV file
+    """
+    try:
+        if not hasattr(meta_model, 'coef_'):
+            logger.warning("Meta-model does not have coefficients (not a linear model)")
+            return
+        
+        # Extract coefficients
+        coefficients = meta_model.coef_[0] if meta_model.coef_.ndim > 1 else meta_model.coef_
+        intercept = meta_model.intercept_[0] if hasattr(meta_model, 'intercept_') else 0.0
+        
+        # Prepare data for CSV
+        coef_data = []
+        for i, model_name in enumerate(base_model_names):
+            coef_data.append({
+                'feature': model_name,
+                'coefficient': coefficients[i] if i < len(coefficients) else 0.0
+            })
+        
+        # Add intercept
+        coef_data.append({
+            'feature': 'intercept',
+            'coefficient': intercept
+        })
+        
+        # Create DataFrame and save to CSV
+        import pandas as pd
+        df_coef = pd.DataFrame(coef_data)
+        
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        coef_path = os.path.join(output_dir, 'meta_model_coefficients.csv')
+        df_coef.to_csv(coef_path, index=False)
+        logger.info(f"🧠 Meta-model coefficients saved to: {coef_path}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error saving meta-model coefficients: {e}")
+
+
+def prepare_calibration_method(method: str):
+    """
+    Prepare calibration method for probability calibration.
+    
+    Args:
+        method: Calibration method ('isotonic', 'sigmoid', or 'none')
+        
+    Returns:
+        Calibration method string or None
+    """
+    if method in ('isotonic', 'sigmoid'):
+        return method
+    return None
+
+
+def _determine_output_directory(batch_num: Any = None, base_dir: str = "reports") -> tuple[str, str]:
     """Helper function to determine output directory and suffix for visualizations."""
     if batch_num is not None:
         if isinstance(batch_num, str) and '_' in batch_num:
             batch_parts = batch_num.split('_')
             if len(batch_parts) > 1:
-                batch_dir = f"reports/batch multiple"
+                batch_dir = f"{base_dir}/batch multiple"
                 suffix = f"_batch_multiple"
             else:
-                batch_dir = f"reports/batch {batch_num}"
+                batch_dir = f"{base_dir}/batch {batch_num}"
                 suffix = f"_batch_{batch_num}"
         else:
-            batch_dir = f"reports/batch {batch_num}"
+            batch_dir = f"{base_dir}/batch {batch_num}"
             suffix = f"_batch_{batch_num}"
     else:
-        batch_dir = "reports"
+        batch_dir = base_dir
         suffix = ""
     return batch_dir, suffix
 
@@ -1070,11 +1414,165 @@ def _create_confusion_matrix_plot(model_name: str, y_true, y_pred, batch_dir: st
         return False
 
 
+def _create_confusion_matrices_oof(models: Dict[str, Any], X_test: pd.DataFrame, y_test: pd.Series, 
+                                   thresholds: Dict[str, float], output_dir: str, suffix: str = "") -> int:
+    """
+    Create confusion matrices for OOF models using averaged test predictions.
+    
+    Args:
+        models: Dictionary containing model information including test predictions
+        X_test: Test features 
+        y_test: Test labels
+        thresholds: Dictionary of optimal thresholds per model
+        output_dir: Output directory for plots
+        suffix: Filename suffix
+        
+    Returns:
+        Number of confusion matrices created
+    """
+    from sklearn.metrics import confusion_matrix
+    count = 0
+    
+    # Extract test predictions and create confusion matrices
+    test_predictions = models.get('test_predictions', {})
+    
+    for model_name, test_proba in test_predictions.items():
+        try:
+            if len(test_proba) == 0:
+                continue
+                
+            threshold = thresholds.get(model_name, 0.5)
+            y_pred = (test_proba >= threshold).astype(int)
+            
+            # Create confusion matrix
+            cm = confusion_matrix(y_test, y_pred)
+            
+            plt.figure(figsize=(MATRIX_FIGURE_WIDTH, MATRIX_FIGURE_HEIGHT))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                       xticklabels=['No Trade', 'Trade'], 
+                       yticklabels=['No Trade', 'Trade'])
+            plt.title(f'Confusion Matrix - {model_name.replace("_", " ").title()}\n(Threshold: {threshold:.3f})')
+            plt.xlabel('Predicted')
+            plt.ylabel('Actual')
+            
+            # Save the plot
+            matrix_path = os.path.join(output_dir, f"confusion_matrix_{model_name}{suffix}.png")
+            plt.savefig(matrix_path, dpi=CHART_DPI, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"✅ Saved confusion matrix: {matrix_path}")
+            count += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating confusion matrix for {model_name}: {e}")
+            continue
+    
+    # Create confusion matrix for meta-model if available
+    if 'meta_predictions' in models:
+        try:
+            y_pred_meta = models['meta_predictions']
+            cm = confusion_matrix(y_test, y_pred_meta)
+            
+            plt.figure(figsize=(MATRIX_FIGURE_WIDTH, MATRIX_FIGURE_HEIGHT))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                       xticklabels=['No Trade', 'Trade'], 
+                       yticklabels=['No Trade', 'Trade'])
+            plt.title(f'Confusion Matrix - Meta Model')
+            plt.xlabel('Predicted')
+            plt.ylabel('Actual')
+            
+            # Save the plot
+            matrix_path = os.path.join(output_dir, f"confusion_matrix_meta_model{suffix}.png")
+            plt.savefig(matrix_path, dpi=CHART_DPI, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"✅ Saved meta-model confusion matrix: {matrix_path}")
+            count += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating meta-model confusion matrix: {e}")
+    
+    return count
+
+
+def _create_metric_comparison_charts(metrics: Dict[str, Dict[str, float]], output_dir: str, 
+                                   suffix: str = "", title_prefix: str = "Committee") -> int:
+    """
+    Create bar charts comparing F1, ROC AUC, and PR AUC across models.
+    
+    Args:
+        metrics: Dictionary of metrics for each model
+        output_dir: Output directory for plots
+        suffix: Filename suffix
+        title_prefix: Prefix for chart titles
+        
+    Returns:
+        Number of charts created
+    """
+    metric_names = ['f1', 'roc_auc', 'pr_auc']
+    metric_display_names = {'f1': 'F1 Score', 'roc_auc': 'ROC AUC', 'pr_auc': 'PR AUC'}
+    count = 0
+    
+    for metric_name in metric_names:
+        try:
+            logger.info(f"📊 Generating {metric_display_names[metric_name]} comparison chart...")
+            
+            plt.figure(figsize=(CHART_FIGURE_WIDTH, CHART_FIGURE_HEIGHT))
+            
+            # Extract model names and values (separate base models from meta-model)
+            base_models = [name for name in metrics.keys() if name != 'meta_model']
+            base_values = [metrics[name][metric_name] for name in base_models]
+            
+            # Prepare colors
+            colors = ['skyblue'] * len(base_models)
+            model_names = base_models[:]
+            values = base_values[:]
+            
+            # Add meta-model if it exists
+            if 'meta_model' in metrics:
+                model_names.append('meta_model')
+                values.append(metrics['meta_model'][metric_name])
+                colors.append('orange')
+            
+            # Create bar plot
+            bars = plt.bar(range(len(model_names)), values, color=colors)
+            
+            plt.ylim(0, 1)
+            plt.title(f"{title_prefix} - {metric_display_names[metric_name]} Comparison")
+            plt.ylabel(metric_display_names[metric_name])
+            plt.xlabel('Model')
+            plt.xticks(range(len(model_names)), [name.replace('_', ' ').title() for name in model_names], rotation=45)
+            
+            # Add value labels on bars
+            for i, (bar, val) in enumerate(zip(bars, values)):
+                plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+                        f"{val:.3f}", ha='center', va='bottom', fontsize=10)
+            
+            plt.tight_layout()
+            
+            # Save the plot
+            plot_path = os.path.join(output_dir, f"{metric_name}_comparison{suffix}.png")
+            plt.savefig(plot_path, dpi=CHART_DPI, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"✅ Saved {metric_display_names[metric_name]} chart: {plot_path}")
+            count += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating {metric_display_names[metric_name]} chart: {e}")
+            continue
+    
+    return count
+
+
 def create_visualizations_unified(models: Dict[str, Any], X_test: pd.DataFrame, y_test: pd.Series, 
                                  metrics: Dict[str, Dict[str, float]], batch_num: Any = None,
-                                 mode: str = "oof") -> None:
+                                 mode: str = "oof", output_dir: str = "reports") -> None:
     """
     Unified visualization function for both OOF and advanced training modes.
+    
+    Creates confusion matrices and metric comparison charts (F1, ROC AUC, PR AUC).
+    All plots are saved with descriptive names in the specified output directory.
     
     Args:
         models: Dictionary containing trained models and predictions
@@ -1083,6 +1581,7 @@ def create_visualizations_unified(models: Dict[str, Any], X_test: pd.DataFrame, 
         metrics: Nested dictionary of metrics for each model
         batch_num: Optional batch identifier used to name the output directory
         mode: Training mode ("oof" for out-of-fold, "advanced" for advanced training)
+        output_dir: Base output directory for saving plots
     """
     if not VISUALIZATION_AVAILABLE:
         logger.warning("Visualization libraries not available; skipping plots.")
@@ -1090,17 +1589,19 @@ def create_visualizations_unified(models: Dict[str, Any], X_test: pd.DataFrame, 
     
     try:
         # Setup output directory
-        batch_dir, suffix = _determine_output_directory(batch_num)
+        batch_dir, suffix = _determine_output_directory(batch_num, output_dir)
         _setup_output_directory(batch_dir)
         
         title_prefix = "Out-of-Fold Committee" if mode == "oof" else "Advanced Committee"
         
-        # Generate confusion matrices (mode-dependent)
+        # Generate confusion matrices
         confusion_matrix_count = 0
         if mode == "oof":
-            logger.info("📈 Skipping confusion matrices for OOF implementation (would need fold-specific test sets)")
+            # For OOF mode, use test predictions from the models dictionary
+            thresholds = models.get('thresholds', {})
+            confusion_matrix_count = _create_confusion_matrices_oof(models, X_test, y_test, thresholds, batch_dir, suffix)
         else:
-            # For advanced mode, generate confusion matrices using stored models
+            # For advanced mode, use direct model predictions
             for model_name in models.keys():
                 if model_name not in ['meta_model', 'thresholds', 'oof_predictions', 'test_predictions', 'meta_test_features', 'meta_predictions']:
                     try:
@@ -1113,22 +1614,23 @@ def create_visualizations_unified(models: Dict[str, Any], X_test: pd.DataFrame, 
                         logger.error(f"❌ Error creating confusion matrix for {model_name}: {e}")
                         continue
         
-        # Generate metric comparison charts
-        metric_names = ['accuracy', 'f1', 'roc_auc']
-        metric_chart_count = 0
+        # Generate metric comparison charts (F1, ROC AUC, PR AUC)
+        metric_chart_count = _create_metric_comparison_charts(metrics, batch_dir, suffix, title_prefix)
         
-        for metric_name in metric_names:
-            if _create_metric_bar_chart(metric_name, metrics, batch_dir, suffix, title_prefix):
-                metric_chart_count += 1
+        # Export metrics to CSV
+        thresholds = models.get('thresholds', {})
+        export_metrics_to_csv(metrics, thresholds, batch_dir)
+        
+        # Save meta-model coefficients if available
+        if 'meta_model' in models:
+            meta_model = models['meta_model']
+            base_model_names = [name for name in metrics.keys() if name != 'meta_model']
+            save_meta_model_coefficients(meta_model, base_model_names, batch_dir)
         
         # Log summary
-        if mode == "oof":
-            logger.info(f"📊 Generated {metric_chart_count} metric comparison charts")
-            logger.info(f"🎉 Visualization creation complete! Total images: {metric_chart_count}")
-        else:
-            logger.info(f"📊 Generated {confusion_matrix_count} confusion matrices and {metric_chart_count} metric comparison charts")
-            logger.info(f"🎉 Visualization creation complete! Total images: {confusion_matrix_count + metric_chart_count}")
-        
+        total_images = confusion_matrix_count + metric_chart_count
+        logger.info(f"📊 Generated {confusion_matrix_count} confusion matrices and {metric_chart_count} metric comparison charts")
+        logger.info(f"🎉 Visualization creation complete! Total images: {total_images}")
         logger.info(f"📂 All visualizations saved to: {batch_dir}")
         
     except Exception as e:
@@ -1137,7 +1639,7 @@ def create_visualizations_unified(models: Dict[str, Any], X_test: pd.DataFrame, 
 
 
 def create_visualizations_oof(models: Dict[str, Any], X_test: pd.DataFrame, y_test: pd.Series, 
-                             metrics: Dict[str, Dict[str, float]], batch_num: Any = None) -> None:
+                             metrics: Dict[str, Dict[str, float]], batch_num: Any = None, output_dir: str = "reports") -> None:
     """
     Generate and save confusion matrices and metric bar charts for out-of-fold stacking models.
     
@@ -1149,25 +1651,27 @@ def create_visualizations_oof(models: Dict[str, Any], X_test: pd.DataFrame, y_te
         y_test: Test labels
         metrics: Nested dictionary of metrics for each model
         batch_num: Optional batch identifier used to name the output directory
+        output_dir: Base output directory for saving plots
     """
-    create_visualizations_unified(models, X_test, y_test, metrics, batch_num, mode="oof")
+    create_visualizations_unified(models, X_test, y_test, metrics, batch_num, mode="oof", output_dir=output_dir)
 
 
 def create_visualizations_advanced(models: Dict[str, Any], X_test: pd.DataFrame, y_test: pd.Series, 
-                                  metrics: Dict[str, Dict[str, float]], batch_num: Any = None) -> None:
+                                  metrics: Dict[str, Dict[str, float]], batch_num: Any = None, output_dir: str = "reports") -> None:
     """
     Generate and save confusion matrices and metric bar charts for advanced models.
 
-    This version handles the new model structure with optimal thresholds and
-    out-of-fold trained models.
+    This function now delegates to the unified visualization function.
 
     Args:
-        models: Mapping of model names to model configurations
+        models: Dictionary containing trained models and predictions
         X_test: Test features
         y_test: Test labels
         metrics: Nested dictionary of metrics for each model
         batch_num: Optional batch identifier used to name the output directory
+        output_dir: Base output directory for saving plots
     """
+    create_visualizations_unified(models, X_test, y_test, metrics, batch_num, mode="advanced", output_dir=output_dir)
     if not VISUALIZATION_AVAILABLE:
         logger.warning("Visualization libraries not available; skipping plots.")
         return
@@ -1549,7 +2053,9 @@ def collect_alpaca_training_data(batch_numbers: List[int], max_symbols_per_batch
         raise
 
 
-def main(batch_numbers: List[int] = None, max_symbols_per_batch: int = 10, use_alpaca: bool = True, stacking_method: str = 'oof') -> None:
+def main(batch_numbers: List[int] = None, max_symbols_per_batch: int = 10, use_alpaca: bool = True, 
+         stacking_method: str = 'oof', n_folds: int = DEFAULT_N_FOLDS, sampler: str = 'smoteenn',
+         calibrate: str = DEFAULT_CALIBRATION_METHOD, threshold: float = 0.5, output_dir: str = 'reports') -> None:
     """
     Main function for Committee of Five training with Alpaca data integration.
     
@@ -1558,12 +2064,18 @@ def main(batch_numbers: List[int] = None, max_symbols_per_batch: int = 10, use_a
         max_symbols_per_batch: Maximum symbols per batch (default: 10)
         use_alpaca: Whether to use Alpaca API for data collection (default: True)
         stacking_method: Stacking method 'oof' (out-of-fold) or 'standard' (default: 'oof')
+        n_folds: Number of cross-validation folds (default: DEFAULT_N_FOLDS)
+        sampler: Sampling method for class imbalance ('smoteenn' or 'none', default: 'smoteenn')
+        calibrate: Calibration method ('isotonic', 'sigmoid', or 'none', default: 'isotonic')
+        threshold: Default probability threshold for classification (default: 0.5)
+        output_dir: Directory for saving plots (default: 'reports')
     """
     if batch_numbers is None:
         batch_numbers = [1, 2]  # Default to first 2 batches for testing
     
     logger.info(f"🚀 Starting Committee of Five training for batches: {batch_numbers}")
     logger.info(f"📊 Using {stacking_method.upper()} stacking method")
+    logger.info(f"⚙️  Configuration: n_folds={n_folds}, sampler={sampler}, calibrate={calibrate}, threshold={threshold}")
     
     try:
         if use_alpaca:
@@ -1608,13 +2120,15 @@ def main(batch_numbers: List[int] = None, max_symbols_per_batch: int = 10, use_a
             logger.warning("Standard stacking method not implemented in this version. Using OOF method.")
             models, metrics = train_committee_models_advanced(X_train, y_train, X_test, y_test)
         
-        # Generate visualizations
+        # Generate visualizations using the unified approach with configurable output directory
         if VISUALIZATION_AVAILABLE:
             batch_suffix = '_'.join(map(str, batch_numbers)) if batch_numbers else 'default'
-            if stacking_method == 'oof':
-                create_visualizations_oof(models, X_test, y_test, metrics, batch_num=batch_suffix)
-            else:
-                create_visualizations_advanced(models, X_test, y_test, metrics, batch_num=batch_suffix)
+            # Create visualizations in the specified output directory
+            create_visualizations_unified(
+                models, X_test, y_test, metrics, 
+                batch_num=batch_suffix, mode="oof" if stacking_method == 'oof' else "advanced",
+                output_dir=output_dir
+            )
         
         # Log training summary
         log_training_summary(
@@ -1655,6 +2169,18 @@ if __name__ == '__main__':
     parser.add_argument('--stacking', choices=['oof', 'standard'], default='oof',
                        help='Stacking method: oof (out-of-fold) or standard (default: oof)')
     
+    # Add centralized CLI flags for model configuration
+    parser.add_argument('--n-folds', type=int, default=DEFAULT_N_FOLDS,
+                       help=f'Number of CV folds (default: {DEFAULT_N_FOLDS})')
+    parser.add_argument('--sampler', choices=['smoteenn', 'none'], default='smoteenn',
+                       help='Sampling method to balance classes (default: smoteenn)')
+    parser.add_argument('--calibrate', choices=['isotonic', 'sigmoid', 'none'], default=DEFAULT_CALIBRATION_METHOD,
+                       help=f'Calibration method (default: {DEFAULT_CALIBRATION_METHOD})')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                       help='Default probability threshold for classification (default: 0.5)')
+    parser.add_argument('--output-dir', type=str, default='reports',
+                       help='Directory for saving plots (default: reports)')
+    
     args = parser.parse_args()
     
     # Override cache setting if force-fresh is specified
@@ -1673,5 +2199,10 @@ if __name__ == '__main__':
         batch_numbers=args.batches,
         max_symbols_per_batch=args.max_symbols,
         use_alpaca=not args.no_alpaca,
-        stacking_method=args.stacking
+        stacking_method=args.stacking,
+        n_folds=args.n_folds,
+        sampler=args.sampler,
+        calibrate=args.calibrate,
+        threshold=args.threshold,
+        output_dir=args.output_dir
     )
