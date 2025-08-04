@@ -1,8 +1,0 @@
-feature,coefficient
-xgboost,1.0385517009748595
-lightgbm,1.1281017195579819
-catboost,1.2464236837941425
-random_forest,1.4033178795845211
-svm,1.415630846558246
-production_ensemble,0.0
-intercept,-5.409705397212131

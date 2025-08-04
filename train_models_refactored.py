@@ -392,8 +392,6 @@ def main():
                        help='Save visualization plots')
     parser.add_argument('--collect-data', action='store_true',
                        help='Collect fresh data using Alpaca')
-    parser.add_argument('--batch-id', type=str, default=None,
-                       help='Batch identifier for organizing outputs')
     
     args = parser.parse_args()
     
@@ -417,13 +415,6 @@ def main():
         config.random_state = args.random_state
     
     config.visualization.save_plots = args.save_plots
-    
-    # Add batch ID if provided
-    if hasattr(config.visualization, 'batch_id'):
-        config.visualization.batch_id = args.batch_id
-    else:
-        # Add batch_id attribute dynamically if not in config
-        setattr(config.visualization, 'batch_id', args.batch_id)
     
     # Data collection or loading
     if args.collect_data:
@@ -453,8 +444,7 @@ def main():
         return 1
     
     # Get feature columns (all except target)
-    feature_columns = [col for col in df.columns 
-                      if col not in [args.target_column, 'ticker']]
+    feature_columns = [col for col in df.columns if col != args.target_column]
     logger.info(f"📊 Using {len(feature_columns)} features")
     
     # Prepare training data

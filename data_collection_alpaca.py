@@ -400,8 +400,30 @@ class AlpacaDataCollector:
 
 def main():
     """
-    Example usage of the AlpacaDataCollector.
+    Command-line interface for the AlpacaDataCollector.
     """
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Collect training data from Alpaca API')
+    parser.add_argument('--batches', type=str, help='Comma-separated batch numbers (e.g., "1,2,3") or single batch number')
+    parser.add_argument('--max-symbols', type=int, default=50, help='Maximum symbols per batch')
+    parser.add_argument('--output-file', type=str, default='alpaca_training_data.csv', help='Output CSV file path')
+    
+    args = parser.parse_args()
+    
+    # Parse batch numbers
+    if args.batches:
+        try:
+            if ',' in args.batches:
+                batch_numbers = [int(b.strip()) for b in args.batches.split(',')]
+            else:
+                batch_numbers = [int(args.batches)]
+        except ValueError:
+            logger.error("❌ Invalid batch numbers format. Use comma-separated integers (e.g., '1,2,3')")
+            return
+    else:
+        batch_numbers = [1, 2]  # Default for backward compatibility
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -411,20 +433,19 @@ def main():
         # Initialize collector
         collector = AlpacaDataCollector()
         
-        # Collect data for a few batches (start small for testing)
+        # Collect data for specified batches
         training_data = collector.collect_training_data(
-            batch_numbers=[1, 2],  # Start with first 2 batches
-            max_symbols_per_batch=5  # Limit for testing
+            batch_numbers=batch_numbers,
+            max_symbols_per_batch=args.max_symbols
         )
         
         if len(training_data) > 0:
-            # Save to CSV for train_models.py
-            output_file = "alpaca_training_data.csv"
-            training_data.to_csv(output_file, index=False)
-            logger.info(f"💾 Training data saved to {output_file}")
+            # Save to specified output file
+            training_data.to_csv(args.output_file, index=False)
+            logger.info(f"💾 Training data saved to {args.output_file}")
             
             # Print sample data
-            print("\n📋 Sample of collected data:")
+            print(f"\n📋 Sample of collected data:")
             print(training_data.head())
             print(f"\n📊 Data shape: {training_data.shape}")
             print(f"🎯 Target distribution: {training_data['target'].value_counts().to_dict()}")
