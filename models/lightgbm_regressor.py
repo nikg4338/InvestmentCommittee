@@ -85,7 +85,7 @@ class LightGBMRegressor(BaseModel):
             self.optimal_threshold_ = 0.0
             return
         
-        # Store hyperparameters
+        # Store hyperparameters for lgb.train()
         self.params = {
             'objective': objective,
             'alpha': alpha,  # Huber loss parameter
@@ -96,13 +96,13 @@ class LightGBMRegressor(BaseModel):
             'bagging_fraction': bagging_fraction,
             'bagging_freq': bagging_freq,
             'verbose': verbose,
-            'random_state': random_state,
+            'seed': random_state,
             'metric': 'huber',  # Use Huber metric for evaluation
             **kwargs
         }
         
-        # Initialize model
-        self.model = lgb.LGBMRegressor(**self.params)
+        # Model will be set during training
+        self.model = None
         
         # Training tracking
         self.validation_metrics = {}
@@ -167,7 +167,9 @@ class LightGBMRegressor(BaseModel):
     def train(self, X_train: pd.DataFrame, y_train: pd.Series, 
               X_val: Optional[pd.DataFrame] = None, y_val: Optional[pd.Series] = None,
               early_stopping_rounds: int = 100,
-              find_optimal_threshold: bool = True) -> None:
+              find_optimal_threshold: bool = True,
+              positive_weight: float = 10.0,
+              use_smote: bool = True) -> None:
         """
         Train the LightGBM regressor with optional validation and early stopping.
         
@@ -178,8 +180,10 @@ class LightGBMRegressor(BaseModel):
             y_val: Validation targets
             early_stopping_rounds: Early stopping patience
             find_optimal_threshold: Whether to find optimal threshold for binary decisions
+            positive_weight: Weight multiplier for positive samples (default: 10.0)
+            use_smote: Whether to apply SMOTE upsampling for positive examples (default: True)
         """
-        if not LIGHTGBM_AVAILABLE or self.model is None:
+        if not LIGHTGBM_AVAILABLE:
             raise ValueError("LightGBM not available")
         
         try:
@@ -190,20 +194,64 @@ class LightGBMRegressor(BaseModel):
             
             self.log(f"Training on {len(X_train_clean)} samples (removed {(~train_mask).sum()} NaN samples)")
             
+            # Apply combined SMOTE + sample weighting enhancement
+            if use_smote:
+                from utils.sampling import apply_combined_enhancement
+                X_train_enhanced, y_train_enhanced, sample_weights = apply_combined_enhancement(
+                    X_train_clean, y_train_clean,
+                    use_smote=True,
+                    positive_weight=positive_weight,
+                    threshold=0.0
+                )
+                self.log(f"Enhanced training data: {len(X_train_clean)} → {len(X_train_enhanced)} samples")
+            else:
+                # Use only sample weighting without SMOTE
+                X_train_enhanced = X_train_clean
+                y_train_enhanced = y_train_clean
+                sample_weights = np.where(y_train_enhanced > 0, positive_weight, 1.0)
+                
+            positive_count = np.sum(y_train_enhanced > 0)
+            total_count = len(y_train_enhanced)
+            
+            self.log(f"Sample weighting: {positive_count}/{total_count} positive samples with weight {positive_weight}x")
+            
             if X_val is not None and y_val is not None:
                 # Remove NaN values from validation set
                 val_mask = ~(X_val.isna().any(axis=1) | y_val.isna())
                 X_val_clean = X_val[val_mask]
                 y_val_clean = y_val[val_mask]
                 
-                self.log(f"Validating on {len(X_val_clean)} samples")
+                self.log(f"Using validation set with {len(X_val_clean)} samples (removed {(~val_mask).sum()} NaN samples)")
                 
-                # Train with validation
-                self.model.fit(
-                    X_train_clean, y_train_clean,
-                    eval_set=[(X_val_clean, y_val_clean)],
-                    eval_names=['validation'],
-                    callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)]
+                # Create validation sample weights
+                val_sample_weights = np.where(y_val_clean > 0, positive_weight, 1.0)
+                
+                # Get feature names for dataset creation
+                feature_names = list(X_train_enhanced.columns) if hasattr(X_train_enhanced, 'columns') else None
+                
+                # Create LightGBM datasets with sample weights
+                train_set = lgb.Dataset(
+                    X_train_enhanced, 
+                    label=y_train_enhanced,
+                    weight=sample_weights,
+                    feature_name=feature_names
+                )
+                val_set = lgb.Dataset(
+                    X_val_clean, 
+                    label=y_val_clean,
+                    weight=val_sample_weights,
+                    feature_name=feature_names,
+                    reference=train_set
+                )
+                
+                # Train with validation using LightGBM datasets
+                self.model = lgb.train(
+                    self.params,
+                    train_set,
+                    valid_sets=[train_set, val_set],
+                    valid_names=['training', 'validation'],
+                    callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
+                    num_boost_round=1000
                 )
                 
                 # Calculate validation metrics
@@ -227,23 +275,40 @@ class LightGBMRegressor(BaseModel):
                     self.log(f"Optimal threshold: {self.optimal_threshold_:.4f}, F1: {f1:.3f}")
                 
             else:
-                # Train without validation
-                self.model.fit(X_train_clean, y_train_clean)
+                # Train without validation using LightGBM dataset with sample weights
+                feature_names = list(X_train_enhanced.columns) if hasattr(X_train_enhanced, 'columns') else None
+                
+                train_set = lgb.Dataset(
+                    X_train_enhanced, 
+                    label=y_train_enhanced,
+                    weight=sample_weights,
+                    feature_name=feature_names
+                )
+                
+                self.model = lgb.train(
+                    self.params,
+                    train_set,
+                    num_boost_round=1000
+                )
                 
                 # Use training data to find threshold if no validation data
                 if find_optimal_threshold:
-                    train_pred = self.model.predict(X_train_clean)
-                    self.optimal_threshold_ = self._find_optimal_threshold(train_pred, y_train_clean)
+                    train_pred = self.model.predict(X_train_enhanced)
+                    self.optimal_threshold_ = self._find_optimal_threshold(train_pred, y_train_enhanced)
                     self.log(f"Optimal threshold (from training): {self.optimal_threshold_:.4f}")
             
             # Store feature importance
-            if hasattr(self.model, 'feature_importances_'):
+            if self.model is not None:
+                # Get feature importance from the trained model
+                feature_names = list(X_train_enhanced.columns) if hasattr(X_train_enhanced, 'columns') else [f'feature_{i}' for i in range(X_train_enhanced.shape[1])]
+                importance_scores = self.model.feature_importance(importance_type='gain')
+                
                 self.feature_importance_ = pd.Series(
-                    self.model.feature_importances_,
-                    index=X_train_clean.columns
+                    importance_scores,
+                    index=feature_names
                 ).sort_values(ascending=False)
             
-            self.log(f"Training completed. Best iteration: {getattr(self.model, 'best_iteration_', 'N/A')}")
+            self.log(f"Training completed. Model trained successfully.")
             
         except Exception as e:
             self.log(f"❌ Training failed: {str(e)}")
@@ -287,8 +352,11 @@ class LightGBMRegressor(BaseModel):
         Returns:
             Regression predictions or tuple of (regression_pred, binary_pred)
         """
-        if not LIGHTGBM_AVAILABLE or self.model is None:
-            raise ValueError("Model not trained or LightGBM not available")
+        if not LIGHTGBM_AVAILABLE:
+            raise ValueError("LightGBM not available")
+        
+        if self.model is None:
+            raise ValueError("Model not trained")
         
         try:
             # Get regression predictions

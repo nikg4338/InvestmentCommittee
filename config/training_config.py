@@ -4,7 +4,14 @@ Training Configuration
 =====================
 
 Centralized configuration for all training hyperparameters, thresholds,
-and visualization settings. This eliminates magic numbers scattered
+and         if self.ensemble is None:
+            self.ensemble = EnsembleConfig()
+        if self.models_to_train is None:
+            self.models_to_train = ['xgboost', 'lightgbm', 'catboost', 'random_forest']
+        
+        # Initialize quantile levels if not provided
+        if self.quantile_levels is None:
+            self.quantile_levels = [0.1, 0.25, 0.5, 0.75, 0.9]  # Default quantile levels for uncertainty estimationalization settings. This eliminates magic numbers scattered
 throughout the codebase and makes experimentation easier.
 """
 
@@ -18,6 +25,11 @@ class DataBalancingConfig:
     desired_ratio: float = 0.6                # Target ratio for controlled balancing (60% majority, 40% minority)
     minority_threshold: int = 100             # Threshold below which to use oversampling
     smote_k_neighbors: int = 5                # k_neighbors for SMOTE (will be adapted for small datasets)
+    # Enhanced SMOTE parameters for regression models
+    use_smote_for_regressors: bool = True     # Whether to apply SMOTE to regression models
+    smote_sampling_strategy: str = 'auto'     # SMOTE sampling strategy ('auto', 'minority', float)
+    smote_random_state: int = 42              # Random state for SMOTE reproducibility
+    combine_smote_with_weighting: bool = True # Whether to use both SMOTE and sample weighting
     
 @dataclass
 class CrossValidationConfig:
@@ -126,6 +138,14 @@ class TrainingConfig:
     evaluate_regression_metrics: bool = False        # Include regression metrics (MSE, MAE, RMSE) in evaluation
     multi_horizon_targets: bool = False              # Use multiple target horizons (1d, 3d, 5d, 10d) for ensemble diversity
     
+    # Phase 3: Quantile Loss Options for uncertainty estimation and risk-aware decision making
+    enable_quantile_regression: bool = False         # Enable quantile regression for uncertainty estimation
+    quantile_levels: list = None                     # List of quantile levels (e.g., [0.1, 0.5, 0.9])
+    quantile_ensemble_method: str = 'median'         # Method for combining quantile predictions ('mean', 'median', 'weighted')
+    quantile_decision_strategy: str = 'threshold_optimization'  # Strategy for binary conversion ('threshold_optimization', 'risk_aware', 'median_based')
+    risk_tolerance: str = 'moderate'                 # Risk tolerance for risk-aware decisions ('conservative', 'moderate', 'aggressive')
+    evaluate_quantile_metrics: bool = False          # Include quantile-specific metrics (pinball loss, coverage, interval width)
+    
     def __post_init__(self):
         """Initialize sub-configs if not provided"""
         if self.data_balancing is None:
@@ -172,7 +192,16 @@ def get_extreme_imbalance_config() -> TrainingConfig:
     config.optuna_trials = 15                        # Moderate number of trials for balance
     
     # Include LightGBM regressor in model ensemble for enhanced predictions
-    config.models_to_train = ['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest']
+    # Use regression models for better signal capture with continuous targets
+    config.models_to_train = [
+        # Classification models (keep for comparison)
+        'xgboost', 'lightgbm', 'catboost', 'random_forest',
+        # Regression models with Huber loss for robustness
+        'lightgbm_regressor', 'xgboost_regressor', 'catboost_regressor', 
+        'random_forest_regressor', 'svm_regressor',
+        # Phase 3: Quantile regression for uncertainty estimation
+        'lightgbm_quantile_regressor'
+    ]
     
     # Enable advanced pipeline improvements for extreme imbalance
     config.enable_enhanced_stacking = True           # Use enhanced stacking
@@ -194,6 +223,14 @@ def get_extreme_imbalance_config() -> TrainingConfig:
     # Enhanced evaluation metrics for regression + classification hybrid approach
     config.evaluate_regression_metrics = True        # Include MSE, MAE, RMSE in evaluation
     config.multi_horizon_targets = True             # Use 1d, 3d, 5d, 10d targets for ensemble diversity
+    
+    # Phase 3: Enable quantile regression for uncertainty estimation and risk-aware decisions
+    config.enable_quantile_regression = True         # Enable quantile regression capabilities
+    config.quantile_levels = [0.1, 0.25, 0.5, 0.75, 0.9]  # Multiple quantiles for uncertainty estimation
+    config.quantile_ensemble_method = 'median'       # Robust ensemble method for quantile predictions
+    config.quantile_decision_strategy = 'risk_aware' # Risk-aware binary decision strategy
+    config.risk_tolerance = 'moderate'               # Balanced risk tolerance for investment decisions
+    config.evaluate_quantile_metrics = True          # Include quantile-specific evaluation metrics
     
     return config
 

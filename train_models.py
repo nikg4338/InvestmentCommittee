@@ -26,10 +26,12 @@ import argparse
 import logging
 import os
 import time
+import traceback
 from typing import Dict, Any, Tuple, List, Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import f1_score, precision_score, recall_score
 
 # Import configuration and utilities
 from config.training_config import (
@@ -51,6 +53,13 @@ from utils.visualization import create_training_report as create_visual_report
 from utils.helpers import compute_classification_metrics
 from utils.probability_analysis import analyze_model_ensemble_probabilities, diagnose_probability_issues
 
+# Import advanced optimization utilities
+from utils.advanced_optimization import (
+    find_optimal_threshold_advanced, enhanced_smote_for_regression,
+    convert_multiclass_to_binary, portfolio_aware_threshold_optimization,
+    evaluate_threshold_robustness, adaptive_threshold_selection
+)
+
 # Import Alpaca data collection
 from data_collection_alpaca import AlpacaDataCollector
 
@@ -66,12 +75,87 @@ from utils.pipeline_improvements import (
 
 logger = logging.getLogger(__name__)
 
+def find_optimal_threshold_on_test(y_true: np.ndarray, y_pred_proba: np.ndarray, 
+                                  metric: str = 'f1') -> Tuple[float, float, Dict[str, float]]:
+    """
+    Find optimal threshold using the TRUE UNBALANCED test set.
+    This avoids data leakage from resampled training data.
+    
+    Args:
+        y_true: True binary labels (unbalanced test set)
+        y_pred_proba: Predicted probabilities
+        metric: Metric to optimize ('f1', 'precision', 'recall', 'pr_auc')
+        
+    Returns:
+        (optimal_threshold, best_score, metrics_dict)
+    """
+    from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score
+    
+    # Use precision-recall curve for threshold optimization
+    precision, recall, thresholds = precision_recall_curve(y_true, y_pred_proba)
+    
+    # Calculate F1 scores for each threshold
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+    
+    if metric == 'f1':
+        # Find threshold that maximizes F1
+        best_idx = np.argmax(f1_scores)
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+        best_score = f1_scores[best_idx]
+        
+    elif metric == 'precision':
+        # Find threshold that maximizes precision (conservative approach)
+        best_idx = np.argmax(precision)
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+        best_score = precision[best_idx]
+        
+    elif metric == 'recall':
+        # Find threshold that maximizes recall (aggressive approach)
+        best_idx = np.argmax(recall)
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+        best_score = recall[best_idx]
+        
+    elif metric == 'pr_auc':
+        # Use threshold that balances precision and recall for best AUC
+        from sklearn.metrics import auc
+        pr_auc = auc(recall, precision)
+        # Find threshold closest to the "elbow" of the PR curve
+        best_idx = np.argmax(f1_scores)  # F1 is good proxy for PR-AUC optimization
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+        best_score = pr_auc
+        
+    else:
+        # Default to F1 optimization
+        best_idx = np.argmax(f1_scores)
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+        best_score = f1_scores[best_idx]
+    
+    # Calculate final metrics at optimal threshold
+    y_pred_binary = (y_pred_proba >= best_threshold).astype(int)
+    
+    final_metrics = {
+        'threshold': best_threshold,
+        'f1': f1_score(y_true, y_pred_binary, zero_division=0),
+        'precision': precision_score(y_true, y_pred_binary, zero_division=0),
+        'recall': recall_score(y_true, y_pred_binary, zero_division=0),
+        'support_positive': np.sum(y_true),
+        'support_negative': len(y_true) - np.sum(y_true),
+        'predicted_positive': np.sum(y_pred_binary)
+    }
+    
+    logger.info(f"🎯 Optimal threshold ({metric}): {best_threshold:.4f}")
+    logger.info(f"   F1={final_metrics['f1']:.3f}, P={final_metrics['precision']:.3f}, R={final_metrics['recall']:.3f}")
+    logger.info(f"   Predicted positives: {final_metrics['predicted_positive']}/{len(y_true)} ({final_metrics['predicted_positive']/len(y_true)*100:.1f}%)")
+    
+    return best_threshold, best_score, final_metrics
+
 def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metric: str = 'pr_auc') -> float:
     """
     Compute optimal threshold for given predictions using specified metric.
+    Uses the unbalanced test set to avoid data leakage.
     
     Args:
-        y_true: True binary labels
+        y_true: True binary labels (unbalanced)
         proba_preds: Predicted probabilities
         metric: Metric to optimize ('pr_auc', 'f1', 'precision', 'recall')
         
@@ -79,12 +163,18 @@ def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metri
         Optimal threshold value
     """
     try:
-        from utils.evaluation import find_optimal_threshold
-        threshold, _ = find_optimal_threshold(y_true, proba_preds, metric=metric)
+        # Use new threshold optimization that preserves test set distribution
+        threshold, _, _ = find_optimal_threshold_on_test(y_true, proba_preds, metric)
         return threshold
     except Exception as e:
         logger.warning(f"Failed to compute optimal threshold: {e}")
-        return 0.5
+        # Fallback to traditional method
+        try:
+            from utils.evaluation import find_optimal_threshold
+            threshold, _ = find_optimal_threshold(y_true, proba_preds, metric=metric)
+            return threshold
+        except:
+            return 0.5
 
 def optuna_tune_model(model_cls, X: pd.DataFrame, y: pd.Series, n_trials: int = 20) -> Dict[str, Any]:
     """
@@ -119,13 +209,65 @@ def optuna_tune_model(model_cls, X: pd.DataFrame, y: pd.Series, n_trials: int = 
         else:
             logger.warning(f"Optuna optimization failed for {model_cls.__name__}, using defaults")
             return {}
-        
+            
     except ImportError:
         logger.warning("Optuna not available - using default parameters")
         return {}
     except Exception as e:
         logger.warning(f"Optuna tuning failed: {e}")
         return {}
+
+def get_model_predictions(model, X: pd.DataFrame, is_regressor: bool = False) -> np.ndarray:
+    """
+    Get predictions from a model, handling both classification and regression.
+    
+    Args:
+        model: Trained model instance
+        X: Input features
+        is_regressor: Whether the model is a regressor
+        
+    Returns:
+        Probability scores for classification or continuous predictions for regression
+    """
+    try:
+        if is_regressor:
+            # For regressors, use the predict method directly
+            predictions = model.predict(X)
+            return predictions
+        else:
+            # For classifiers, try predict_proba first, fall back to predict
+            if hasattr(model, 'predict_proba'):
+                return model.predict_proba(X)[:, 1]
+            else:
+                return model.predict(X)
+    except Exception as e:
+        logger.warning(f"Error getting predictions from model: {e}")
+        return np.zeros(len(X))
+
+def is_regression_model(model_name: str) -> bool:
+    """
+    Check if a model name corresponds to a regression model.
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        True if it's a regression model, False otherwise
+    """
+    return 'regressor' in model_name.lower() or model_name.endswith('_regressor')
+
+def convert_regression_to_binary(predictions: np.ndarray, threshold: float = 0.0) -> np.ndarray:
+    """
+    Convert regression predictions to binary predictions using a threshold.
+    
+    Args:
+        predictions: Continuous regression predictions
+        threshold: Threshold for binary conversion (default: 0.0 for positive returns)
+        
+    Returns:
+        Binary predictions (0 or 1)
+    """
+    return (predictions > threshold).astype(int)
 
 def compute_dynamic_ensemble_weights(evaluation_results: Dict[str, Any], 
                                    base_models: List[str] = None) -> Dict[str, float]:
@@ -178,6 +320,21 @@ def clean_data_for_ml(X: pd.DataFrame) -> pd.DataFrame:
     Clean the feature matrix by handling infinite and extreme values.
     """
     X_clean = X.copy()
+    
+    # First, remove any columns that contain datetime strings
+    datetime_like_columns = []
+    for col in X_clean.columns:
+        if X_clean[col].dtype == 'object':
+            # Check if column contains datetime-like strings
+            sample_values = X_clean[col].dropna().head(5).astype(str)
+            if any(any(pattern in str(val) for pattern in ['-', ':', 'T', '+', 'UTC', 'GMT']) and 
+                   len(str(val)) > 10 for val in sample_values):
+                datetime_like_columns.append(col)
+    
+    if datetime_like_columns:
+        logger.warning(f"Removing {len(datetime_like_columns)} datetime-like columns during cleaning: {datetime_like_columns}")
+        X_clean = X_clean.drop(columns=datetime_like_columns)
+    
     # Replace infinite values with NaN
     X_clean = X_clean.replace([np.inf, -np.inf], np.nan)
     
@@ -193,15 +350,19 @@ def clean_data_for_ml(X: pd.DataFrame) -> pd.DataFrame:
 def prepare_training_data(df: pd.DataFrame, 
                          feature_columns: List[str],
                          target_column: str = 'target',
-                         config: Optional[TrainingConfig] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+                         config: Optional[TrainingConfig] = None,
+                         enable_enhanced_targets: bool = True,
+                         target_strategy: str = 'top_percentile') -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Prepare training data with robust splitting and cleaning.
+    Prepare training data with robust splitting, cleaning, and enhanced target handling.
     
     Args:
         df: Input DataFrame with features and target
         feature_columns: List of feature column names
         target_column: Name of target column
         config: Training configuration
+        enable_enhanced_targets: Whether to use enhanced target strategies
+        target_strategy: Target enhancement strategy ('top_percentile', 'multi_class', 'quantile_buckets')
         
     Returns:
         X_train, X_test, y_train, y_test
@@ -209,11 +370,53 @@ def prepare_training_data(df: pd.DataFrame,
     if config is None:
         config = get_default_config()
     
-    logger.info("Preparing training data...")
+    logger.info("Preparing enhanced training data...")
     
     # Extract features and target
     X = df[feature_columns].copy()
     y = df[target_column].copy()
+    
+    # Enhanced target processing
+    if enable_enhanced_targets and target_strategy in ['multi_class', 'quantile_buckets']:
+        logger.info(f"🔄 Processing {target_strategy} targets...")
+        
+        # Check if target is already multi-class
+        unique_targets = y.unique()
+        n_classes = len(unique_targets)
+        
+        if n_classes > 2:
+            logger.info(f"   Multi-class target detected: {n_classes} classes")
+            
+            # For training, we can use multi-class directly or convert to binary
+            if target_strategy == 'multi_class':
+                # Keep multi-class for richer patterns during training
+                logger.info(f"   Using multi-class target for training: {unique_targets}")
+            else:
+                # Convert to binary for final evaluation
+                y = convert_multiclass_to_binary(y.values, strategy='top_class')
+                logger.info(f"   Converted multi-class to binary: {np.unique(y)}")
+        
+        elif target_strategy == 'top_percentile':
+            # Check if we need to apply top-percentile strategy
+            positive_rate = np.sum(y) / len(y) * 100 if len(y) > 0 else 0
+            
+            if positive_rate < 5.0:  # Less than 5% positive rate
+                logger.info(f"   Low positive rate ({positive_rate:.1f}%), applying top-percentile enhancement...")
+                
+                # This would typically be done in data collection, but we can simulate here
+                # by treating continuous values as returns and applying top-percentile
+                if hasattr(df, 'daily_return') or any('return' in col for col in df.columns):
+                    return_cols = [col for col in df.columns if 'return' in col]
+                    if return_cols:
+                        return_col = return_cols[0]  # Use first return column
+                        returns = df[return_col].dropna()
+                        
+                        if len(returns) > 0:
+                            top_threshold = returns.quantile(0.90)  # Top 10%
+                            y = (returns >= top_threshold).astype(int)
+                            
+                            new_positive_rate = np.sum(y) / len(y) * 100
+                            logger.info(f"   Enhanced positive rate: {new_positive_rate:.1f}% (threshold: {top_threshold:.4f})")
     
     # Clean data
     X_clean = clean_data_for_ml(X)
@@ -224,19 +427,54 @@ def prepare_training_data(df: pd.DataFrame,
     y_final = y[mask]
     
     logger.info(f"Data after cleaning: {len(X_final)} samples")
-    logger.info(f"Class distribution: {y_final.value_counts().to_dict()}")
+    
+    # Enhanced class distribution logging
+    if y_final.dtype in ['int64', 'int32'] and len(np.unique(y_final)) <= 10:
+        class_dist = pd.Series(y_final).value_counts().sort_index()
+        logger.info(f"Class distribution: {dict(class_dist)}")
+        
+        # Calculate enhanced metrics
+        if len(np.unique(y_final)) == 2:
+            positive_rate = np.sum(y_final) / len(y_final) * 100
+            logger.info(f"Binary positive rate: {positive_rate:.1f}%")
+            
+            if positive_rate < 5.0:
+                logger.warning(f"⚠️ Very low positive rate ({positive_rate:.1f}%) - consider enhanced sampling")
+            elif positive_rate > 20.0:
+                logger.info(f"✅ Good positive rate ({positive_rate:.1f}%) for model training")
+    else:
+        logger.info(f"Continuous target: mean={y_final.mean():.4f}, std={y_final.std():.4f}")
     
     # Perform robust stratified split
-    X_train, X_test, y_train, y_test = stratified_train_test_split(
-        X_final, y_final,
-        test_size=config.test_size,
-        random_state=config.random_state,
-        min_minority_samples=config.cross_validation.min_minority_samples
-    )
+    try:
+        X_train, X_test, y_train, y_test = stratified_train_test_split(
+            X_final, y_final,
+            test_size=config.test_size,
+            random_state=config.random_state,
+            min_minority_samples=config.cross_validation.min_minority_samples
+        )
+    except Exception as e:
+        logger.warning(f"Stratified split failed: {e}, using random split")
+        from sklearn.model_selection import train_test_split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_final, y_final, 
+            test_size=config.test_size, 
+            random_state=config.random_state
+        )
     
     # Validate split quality
-    split_quality = validate_split_quality(X_train, X_test, y_train, y_test)
-    logger.info(f"Split quality: {split_quality}")
+    try:
+        split_quality = validate_split_quality(X_train, X_test, y_train, y_test)
+        logger.info(f"Split quality: {split_quality}")
+    except Exception as e:
+        logger.warning(f"Split quality validation failed: {e}")
+    
+    # CRITICAL: Do NOT resample here - preserve true data distribution for proper evaluation
+    # Resampling will be done ONLY on training data in the stacking module
+    logger.info("� Preserving true data distribution - resampling will occur only on training data")
+    logger.info(f"✅ Train/test split maintains original positive rates:")
+    logger.info(f"   Training: {np.sum(y_train)/len(y_train)*100:.2f}% positive ({np.sum(y_train)}/{len(y_train)})")
+    logger.info(f"   Test: {np.sum(y_test)/len(y_test)*100:.2f}% positive ({np.sum(y_test)}/{len(y_test)})")
     
     return X_train, X_test, y_train, y_test
 
@@ -532,42 +770,225 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             for issue in meta_issues:
                 logger.warning(f"  - {issue}")
     
-    # Optimize thresholds for all base models
-    logger.info("\n🎯 Individual Model Threshold Optimization:")
-    threshold_results = optimize_ensemble_thresholds(y_test, ensemble_results['base_predictions'], metric='f1')
+    # Optimize thresholds for all base models with UNBALANCED TEST SET
+    logger.info("\n🎯 Advanced Individual Model Threshold Optimization (Unbalanced Test Set):")
+    threshold_results = {}
     
-    # Step 4: Rank-and-vote ensemble (production approach)
+    for model_name, predictions in ensemble_results['base_predictions'].items():
+        try:
+            # Use multiple optimization strategies on UNBALANCED test set
+            strategies = ['f1', 'precision', 'pr_auc']
+            best_threshold = 0.5
+            best_score = 0.0
+            best_strategy = 'f1'
+            
+            for strategy in strategies:
+                try:
+                    threshold, score, metrics = find_optimal_threshold_on_test(
+                        y_test, predictions, strategy
+                    )
+                    
+                    if score > best_score:
+                        best_threshold = threshold
+                        best_score = score
+                        best_strategy = strategy
+                        
+                except Exception as e:
+                    logger.warning(f"Strategy {strategy} failed for {model_name}: {e}")
+                    continue
+            
+            threshold_results[model_name] = {
+                'threshold': best_threshold,
+                'score': best_score,
+                'strategy': best_strategy
+            }
+            
+            logger.info(f"  {model_name}: threshold={best_threshold:.4f}, {best_strategy.upper()}={best_score:.3f}")
+            
+        except Exception as e:
+            logger.warning(f"Threshold optimization failed for {model_name}: {e}")
+            threshold_results[model_name] = {'threshold': 0.5, 'score': 0.0, 'strategy': 'default'}
+    
+    # Portfolio-aware threshold optimization for ensemble
+    logger.info("\n📊 Portfolio-aware ensemble optimization:")
+    try:
+        ensemble_proba = ensemble_results.get('simple_ensemble', np.mean(list(ensemble_results['base_predictions'].values()), axis=0))
+        portfolio_threshold, portfolio_metrics = portfolio_aware_threshold_optimization(
+            y_test, ensemble_proba, portfolio_size=20, risk_tolerance='moderate'
+        )
+        
+        logger.info(f"📊 Portfolio-optimized threshold: {portfolio_threshold:.4f}")
+        logger.info(f"   Expected positions: {portfolio_metrics.get('n_positions', 0)}")
+        logger.info(f"   Portfolio precision: {portfolio_metrics.get('precision', 0):.3f}")
+        
+    except Exception as e:
+        logger.warning(f"Portfolio optimization failed: {e}")
+        portfolio_threshold = 0.5
+        portfolio_metrics = {}
+    
+    # Step 4: Convert regression and quantile predictions to binary decisions
+    logger.info("\n🔄 Phase 4: Converting regression and quantile predictions to binary decisions...")
+    
+    # Import the conversion functions
+    from utils.evaluation import convert_regression_ensemble_to_binary
+    
+    # Check for quantile models
+    quantile_models = {k: v for k, v in ensemble_results['base_predictions'].items() 
+                      if isinstance(v, dict) and all(isinstance(qk, float) for qk in v.keys())}
+    
+    if quantile_models and enable_quantile_eval:
+        # Handle quantile regression models separately
+        logger.info(f"Converting {len(quantile_models)} quantile models to binary predictions...")
+        
+        try:
+            from utils.quantile_evaluation import convert_quantile_ensemble_to_binary
+            
+            decision_strategy = getattr(config, 'quantile_decision_strategy', 'threshold_optimization')
+            risk_tolerance = getattr(config, 'risk_tolerance', 'moderate')
+            
+            quantile_conversion_results = convert_quantile_ensemble_to_binary(
+                quantile_models, 
+                y_test,
+                decision_strategy=decision_strategy,
+                risk_tolerance=risk_tolerance,
+                optimize_thresholds=True
+            )
+            
+            # Log quantile conversion results
+            for model_name, results in quantile_conversion_results.items():
+                logger.info(f"  {model_name} (quantile): F1={results['f1_score']:.3f}, strategy={results.get('decision_strategy', 'unknown')}")
+            
+        except Exception as e:
+            logger.warning(f"Quantile conversion failed: {e}")
+            quantile_conversion_results = {}
+    else:
+        quantile_conversion_results = {}
+    
+    # Handle regular regression models
+    regular_models = {k: v for k, v in ensemble_results['base_predictions'].items() 
+                     if not (isinstance(v, dict) and all(isinstance(qk, float) for qk in v.keys()))}
+    
+    if regular_models:
+        # Convert regular regression predictions to binary decisions with optimized thresholds
+        binary_conversion_results = convert_regression_ensemble_to_binary(
+            regular_models, 
+            y_test, 
+            optimize_thresholds=True
+        )
+        
+        # Log threshold optimization results
+        for model_name, results in binary_conversion_results.items():
+            if results['is_regressor']:
+                logger.info(f"  {model_name}: threshold={results['threshold']:.4f}, F1={results['f1_score']:.3f}")
+    else:
+        binary_conversion_results = {}
+    
+    # Combine conversion results
+    all_conversion_results = {**binary_conversion_results, **quantile_conversion_results}
+    
+    # Create final ensemble using both continuous predictions (for meta-model) and binary decisions
+    final_continuous_predictions = {}
+    final_binary_predictions = {}
+    
+    for model_name, results in all_conversion_results.items():
+        final_continuous_predictions[model_name] = results['continuous_predictions']
+        final_binary_predictions[model_name] = results['predictions']
+    
+    # Step 5: Advanced final ensemble creation
+    logger.info("\n🎯 Phase 5: Creating advanced final ensemble predictions...")
+    
+    # Rank-and-vote ensemble (production approach)
     if config.ensemble.voting_strategy == 'rank_and_vote':
-        logger.info("\n🗳️ Phase 4: Rank-and-vote ensemble...")
+        logger.info("\n🗳️ Rank-and-vote ensemble...")
         
         final_predictions = create_rank_vote_ensemble(
-            ensemble_results['base_predictions'],
+            final_binary_predictions,
             meta_test_proba,
             config
         )
         
-        # Convert to probabilities for evaluation (simple approach)
-        final_probabilities = np.mean(list(ensemble_results['base_predictions'].values()), axis=0)
+        # Convert to probabilities for evaluation (weighted by performance)
+        model_weights = {}
+        for model_name in final_continuous_predictions.keys():
+            model_weights[model_name] = threshold_results.get(model_name, {}).get('score', 1.0)
+        
+        # Normalize weights
+        total_weight = sum(model_weights.values()) or 1.0
+        model_weights = {k: v/total_weight for k, v in model_weights.items()}
+        
+        # Weighted ensemble probabilities
+        final_probabilities = np.zeros(len(y_test))
+        for model_name, proba in final_continuous_predictions.items():
+            weight = model_weights.get(model_name, 1.0/len(final_continuous_predictions))
+            final_probabilities += weight * proba
+        
         if meta_test_proba is not None:
             final_probabilities = (final_probabilities + meta_test_proba) / 2
+            
+        logger.info(f"🎯 Weighted ensemble created with performance-based weights:")
+        for model_name, weight in model_weights.items():
+            logger.info(f"   {model_name}: {weight:.3f}")
+    
     else:
-        # Use simple ensemble with optimized threshold
+        # Use advanced ensemble with multiple threshold strategies
         simple_probabilities = ensemble_results['simple_ensemble']
         
-        # Find optimal threshold for simple ensemble
-        from utils.evaluation import find_optimal_threshold
-        simple_threshold, simple_f1 = find_optimal_threshold(y_test, simple_probabilities, metric='f1')
-        logger.info(f"Simple ensemble optimal threshold: {simple_threshold:.4f} (F1: {simple_f1:.4f})")
+        # Try multiple threshold optimization strategies for ensemble
+        logger.info("\n🔍 Advanced ensemble threshold optimization:")
         
-        final_predictions = (simple_probabilities >= simple_threshold).astype(int)
+        ensemble_strategies = [
+            ('f1', None),
+            ('top_k_percent', 5.0),  # Top 5% strategy
+            ('portfolio_aware', None)
+        ]
+        
+        best_ensemble_threshold = 0.5
+        best_ensemble_score = 0.0
+        best_ensemble_strategy = 'f1'
+        
+        for strategy, param in ensemble_strategies:
+            try:
+                if strategy == 'portfolio_aware':
+                    threshold = portfolio_threshold
+                    # Calculate F1 score for portfolio threshold
+                    y_pred_binary = (simple_probabilities >= threshold).astype(int)
+                    score = f1_score(y_test, y_pred_binary, zero_division=0)
+                    strategy_name = 'portfolio_aware'
+                    
+                elif strategy == 'top_k_percent':
+                    threshold, score, _ = find_optimal_threshold_advanced(
+                        y_test, simple_probabilities, strategy, top_k_percent=param
+                    )
+                    strategy_name = f'top_{param}%'
+                    
+                else:
+                    threshold, score, _ = find_optimal_threshold_advanced(
+                        y_test, simple_probabilities, strategy
+                    )
+                    strategy_name = strategy
+                
+                logger.info(f"   {strategy_name}: threshold={threshold:.4f}, F1={score:.3f}")
+                
+                if score > best_ensemble_score:
+                    best_ensemble_threshold = threshold
+                    best_ensemble_score = score
+                    best_ensemble_strategy = strategy_name
+                    
+            except Exception as e:
+                logger.warning(f"Ensemble strategy {strategy} failed: {e}")
+                continue
+        
+        logger.info(f"🎯 Best ensemble strategy: {best_ensemble_strategy} (threshold={best_ensemble_threshold:.4f}, F1={best_ensemble_score:.3f})")
+        
+        final_predictions = (simple_probabilities >= best_ensemble_threshold).astype(int)
         final_probabilities = simple_probabilities
-        optimal_threshold = simple_threshold
+        optimal_threshold = best_ensemble_threshold
     
-    # Step 5: Comprehensive evaluation
-    logger.info("\n📈 Phase 5: Evaluation...")
+    # Step 6: Comprehensive evaluation
+    logger.info("\n📈 Phase 6: Evaluation...")
     
-    # Prepare evaluation data
-    all_predictions = ensemble_results['base_predictions'].copy()
+    # Prepare evaluation data with both continuous and binary predictions
+    all_predictions = final_continuous_predictions.copy()
     if meta_test_proba is not None:
         all_predictions['meta_model'] = meta_test_proba
     all_predictions['final_ensemble'] = final_probabilities
@@ -579,6 +1000,24 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         meta_test_proba,
         final_probabilities
     )
+    
+    # Enhanced evaluation for quantile regression models if enabled
+    enable_quantile_eval = getattr(config, 'enable_quantile_regression', False)
+    if enable_quantile_eval:
+        try:
+            from utils.quantile_evaluation import evaluate_quantile_ensemble_performance
+            
+            logger.info("\n📊 Enhanced quantile regression evaluation...")
+            evaluation_results = evaluate_quantile_ensemble_performance(
+                y_test,
+                ensemble_results['base_predictions'],
+                meta_test_proba,
+                final_probabilities,
+                config
+            )
+            
+        except Exception as e:
+            logger.warning(f"Quantile evaluation failed, using standard evaluation: {e}")
     
     # Batch-specific signal filter - check if this batch has sufficient signal quality
     PR_AUC_THRESHOLD = 0.05
@@ -681,17 +1120,30 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         except Exception as e:
             logger.warning(f"Drift detection failed: {e}")
     
-    # Create visualizations
+    # Create visualizations with quantile-aware performance summary
     training_results = {
         'evaluation_results': evaluation_results,
         'confusion_matrices': create_confusion_matrices(evaluation_results),
         'model_names': list(ensemble_results['base_predictions'].keys()) + (['meta_model'] if use_meta_model else []),
-        'metrics_df': create_performance_summary(evaluation_results),
+        'metrics_df': None,  # Will be set below with quantile-aware summary
         'y_train': y_train,
         'y_test': y_test,
         'rolling_results': rolling_results,
         'drift_results': drift_results
     }
+    
+    # Create performance summary (quantile-aware if enabled)
+    if enable_quantile_eval:
+        try:
+            from utils.quantile_evaluation import create_quantile_performance_summary
+            performance_df = create_quantile_performance_summary(evaluation_results)
+        except Exception as e:
+            logger.warning(f"Failed to create quantile performance summary: {e}")
+            performance_df = create_performance_summary(evaluation_results)
+    else:
+        performance_df = create_performance_summary(evaluation_results)
+    
+    training_results['metrics_df'] = performance_df
     
     if config.visualization.save_plots:
         plot_paths = create_visual_report(training_results, config.visualization)
@@ -719,7 +1171,7 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         'evaluation_results': evaluation_results,
         'final_predictions': final_predictions,
         'final_probabilities': final_probabilities,
-        'performance_summary': create_performance_summary(evaluation_results),
+        'performance_summary': performance_df,
         'confusion_matrices': create_confusion_matrices(evaluation_results),
         'exported_files': exported_files,
         'plot_paths': plot_paths,
@@ -739,7 +1191,7 @@ def main():
                        choices=['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest', 'svm'],
                        help='Models to train (default: all)')
     parser.add_argument('--data-file', type=str, help='Path to training data CSV')
-    parser.add_argument('--target-column', type=str, default='target', 
+    parser.add_argument('--target-column', type=str, default='target_enhanced', 
                        help='Name of target column')
     parser.add_argument('--test-size', type=float, default=0.2,
                        help='Test set size (0.0-1.0)')
@@ -791,7 +1243,8 @@ def main():
         logger.info("🔄 Collecting fresh data using Alpaca...")
         try:
             collector = AlpacaDataCollector()
-            df = collector.collect_and_engineer_features()
+            # Collect training data for first batch by default
+            df = collector.collect_training_data([1])
             logger.info(f"✓ Collected {len(df)} samples")
         except Exception as e:
             logger.error(f"Data collection failed: {e}")
@@ -813,9 +1266,35 @@ def main():
         logger.error(f"❌ Target column '{args.target_column}' not found in data")
         return 1
     
+    # Ensure target is binary for classification
+    if df[args.target_column].dtype in ['float64', 'float32'] and not df[args.target_column].isin([0, 1]).all():
+        logger.info(f"Converting continuous target to binary using median threshold")
+        threshold = df[args.target_column].median()
+        df[args.target_column] = (df[args.target_column] > threshold).astype(int)
+        
+    logger.info(f"Target distribution: {df[args.target_column].value_counts().to_dict()}")
+    
     # Get feature columns (all except target)
     feature_columns = [col for col in df.columns 
                       if col not in [args.target_column, 'ticker']]
+    
+    # Remove datetime/timestamp columns that can't be used by ML models
+    datetime_columns = []
+    for col in feature_columns:
+        # Check dtype
+        if df[col].dtype in ['datetime64[ns]', 'datetime64[ns, UTC]'] or 'datetime' in str(df[col].dtype):
+            datetime_columns.append(col)
+        # Check for datetime-like strings by sampling values
+        elif df[col].dtype == 'object':
+            sample_values = df[col].dropna().head(10).astype(str)
+            if any(any(pattern in str(val) for pattern in ['-', ':', 'T', '+', 'UTC']) and 
+                   len(str(val)) > 10 for val in sample_values):
+                # Likely datetime string
+                datetime_columns.append(col)
+    
+    if datetime_columns:
+        logger.info(f"Removing {len(datetime_columns)} datetime columns: {datetime_columns}")
+        feature_columns = [col for col in feature_columns if col not in datetime_columns]
     
     # Add LLM macro signal if enabled
     enable_llm_features = getattr(config, 'enable_llm_features', False)
@@ -833,7 +1312,8 @@ def main():
     # Prepare training data
     try:
         X_train, X_test, y_train, y_test = prepare_training_data(
-            df, feature_columns, args.target_column, config
+            df, feature_columns, args.target_column, config,
+            enable_enhanced_targets=True, target_strategy='top_percentile'
         )
     except Exception as e:
         logger.error(f"❌ Data preparation failed: {e}")

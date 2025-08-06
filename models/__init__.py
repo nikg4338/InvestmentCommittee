@@ -3,6 +3,7 @@
 from .base_model import BaseModel
 from .lightgbm_model import LightGBMModel
 from .lightgbm_regressor import LightGBMRegressor
+from .lightgbm_quantile_regressor import LightGBMQuantileRegressor
 from .catboost_model import CatBoostModel
 from .random_forest_model import RandomForestModel
 from .xgboost_model import XGBoostModel
@@ -16,6 +17,7 @@ __all__ = [
     'BaseModel',
     'LightGBMModel', 
     'LightGBMRegressor',
+    'LightGBMQuantileRegressor',
     'CatBoostModel',
     'RandomForestModel', 
     'XGBoostModel',

@@ -441,3 +441,217 @@ def assess_balance_quality(y_original: pd.Series, y_balanced: pd.Series) -> dict
     logger.info(f"Balance quality - Ratio: {orig_ratio:.2f} → {bal_ratio:.2f}, Size: {size_change:.2f}x")
     
     return metrics
+
+def apply_smote_for_regression(X: pd.DataFrame, y: pd.Series, 
+                              threshold: float = 0.0,
+                              k_neighbors: int = 5,
+                              sampling_strategy: str = 'auto',
+                              random_state: int = 42) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Apply SMOTE to regression data by treating positive returns as minority class.
+    
+    This function converts the regression problem to a temporary classification
+    problem, applies SMOTE to generate synthetic positive examples, then converts
+    back to regression targets while preserving the continuous nature.
+    
+    Args:
+        X: Feature matrix
+        y: Continuous target values (returns)
+        threshold: Threshold for defining positive class (default: 0.0)
+        k_neighbors: Number of nearest neighbors for SMOTE
+        sampling_strategy: SMOTE sampling strategy
+        random_state: Random seed for reproducibility
+        
+    Returns:
+        Tuple of (X_resampled, y_resampled) with synthetic positive examples
+    """
+    if not IMBLEARN_AVAILABLE:
+        logger.warning("⚠️ imblearn not available. Returning original data.")
+        return X.copy(), y.copy()
+    
+    try:
+        # Convert to binary classification for SMOTE
+        y_binary = (y > threshold).astype(int)
+        
+        # Check if we have both classes
+        unique_classes = np.unique(y_binary)
+        if len(unique_classes) < 2:
+            logger.warning(f"Only one class found for SMOTE (threshold={threshold}). Returning original data.")
+            return X.copy(), y.copy()
+        
+        # Get class distribution
+        pos_count = np.sum(y_binary == 1)
+        neg_count = np.sum(y_binary == 0)
+        
+        logger.info(f"📊 Pre-SMOTE distribution: {neg_count} negative, {pos_count} positive")
+        
+        # Adjust k_neighbors for small datasets
+        min_class_size = min(pos_count, neg_count)
+        actual_k_neighbors = min(k_neighbors, min_class_size - 1)
+        
+        if actual_k_neighbors < 1:
+            logger.warning("⚠️ Not enough samples for SMOTE. Returning original data.")
+            return X.copy(), y.copy()
+        
+        # Determine appropriate sampling strategy
+        # For SMOTE, use a dictionary to specify exactly how many samples we want
+        if pos_count < neg_count:  # Positive is minority
+            minority_class = 1
+            target_count = int(neg_count * 0.8)  # Upsample to 80% of majority
+        else:  # Negative is minority 
+            minority_class = 0
+            target_count = int(pos_count * 0.8)  # Upsample to 80% of majority
+            
+        # Use dictionary strategy for precise control
+        sampling_strategy_dict = {minority_class: target_count}
+        
+        logger.info(f"📊 SMOTE strategy: upsample class {minority_class} to {target_count} samples")
+        
+        # Apply SMOTE with robust error handling
+        try:
+            smote = SMOTE(
+                k_neighbors=actual_k_neighbors,
+                sampling_strategy=sampling_strategy_dict,
+                random_state=random_state
+            )
+            X_resampled, y_binary_resampled = smote.fit_resample(X, y_binary)
+            logger.info(f"✅ SMOTE successful: {len(X)} → {len(X_resampled)} samples")
+            
+        except ValueError as ve:
+            logger.warning(f"⚠️ SMOTE ValueError (likely k_neighbors too high): {ve}")
+            # Try with fewer neighbors
+            if actual_k_neighbors > 1:
+                try:
+                    smote = SMOTE(
+                        k_neighbors=1,
+                        sampling_strategy=sampling_strategy_dict,
+                        random_state=random_state
+                    )
+                    X_resampled, y_binary_resampled = smote.fit_resample(X, y_binary)
+                    logger.info(f"✅ SMOTE successful with k_neighbors=1: {len(X)} → {len(X_resampled)} samples")
+                except Exception as ve2:
+                    logger.warning(f"⚠️ SMOTE failed even with k_neighbors=1: {ve2}")
+                    raise ve2
+            else:
+                raise ve
+                
+        except Exception as smote_error:
+            logger.warning(f"⚠️ SMOTE failed with unexpected error: {smote_error}")
+            logger.info("🔄 Falling back to simple oversampling...")
+            
+            # Fall back to simple random oversampling
+            from imblearn.over_sampling import RandomOverSampler
+            ros = RandomOverSampler(sampling_strategy=sampling_strategy_dict, random_state=random_state)
+            try:
+                X_resampled, y_binary_resampled = ros.fit_resample(X, y_binary)
+                logger.info("✅ Random oversampling successful")
+            except Exception as ros_error:
+                logger.warning(f"⚠️ Random oversampling also failed: {ros_error}. Returning original data.")
+                return X.copy(), y.copy()
+        
+        # Now we need to assign continuous values to the synthetic samples
+        # For original samples, keep original continuous values
+        # For synthetic samples, generate realistic continuous values
+        
+        # Create mapping from original indices to continuous values
+        original_indices = np.arange(len(y))
+        
+        # Find which samples are synthetic (beyond original length)
+        n_original = len(y)
+        is_synthetic = np.arange(len(y_binary_resampled)) >= n_original
+        
+        # Initialize resampled continuous targets
+        y_resampled = np.zeros(len(y_binary_resampled))
+        
+        # For original samples, use original continuous values
+        y_resampled[:n_original] = y.values
+        
+        # For synthetic samples, generate realistic continuous values
+        synthetic_indices = np.where(is_synthetic)[0]
+        synthetic_binary = y_binary_resampled[synthetic_indices]
+        
+        for i, syn_idx in enumerate(synthetic_indices):
+            if synthetic_binary[i] == 1:  # Positive synthetic sample
+                # Sample from positive distribution
+                positive_values = y[y > threshold]
+                if len(positive_values) > 0:
+                    # Add some noise to make it more realistic
+                    base_value = np.random.choice(positive_values)
+                    noise = np.random.normal(0, positive_values.std() * 0.1)
+                    y_resampled[syn_idx] = max(threshold + 0.001, base_value + noise)
+                else:
+                    y_resampled[syn_idx] = threshold + 0.001
+            else:  # Negative synthetic sample
+                # Sample from negative distribution
+                negative_values = y[y <= threshold]
+                if len(negative_values) > 0:
+                    base_value = np.random.choice(negative_values)
+                    noise = np.random.normal(0, negative_values.std() * 0.1)
+                    y_resampled[syn_idx] = min(threshold - 0.001, base_value + noise)
+                else:
+                    y_resampled[syn_idx] = threshold - 0.001
+        
+        # Convert back to pandas
+        X_resampled_df = pd.DataFrame(X_resampled, columns=X.columns)
+        y_resampled_series = pd.Series(y_resampled, name=y.name)
+        
+        # Log results
+        final_pos_count = np.sum(y_resampled > threshold)
+        final_neg_count = np.sum(y_resampled <= threshold)
+        
+        logger.info(f"📈 Post-SMOTE distribution: {final_neg_count} negative, {final_pos_count} positive")
+        logger.info(f"✨ Generated {len(synthetic_indices)} synthetic samples")
+        logger.info(f"📊 Total samples: {len(y)} → {len(y_resampled)} ({len(y_resampled)/len(y):.2f}x)")
+        
+        return X_resampled_df, y_resampled_series
+        
+    except Exception as e:
+        logger.error(f"❌ SMOTE failed: {e}")
+        return X.copy(), y.copy()
+
+def apply_combined_enhancement(X: pd.DataFrame, y: pd.Series,
+                             use_smote: bool = True,
+                             positive_weight: float = 10.0,
+                             threshold: float = 0.0,
+                             config: Optional[DataBalancingConfig] = None) -> Tuple[pd.DataFrame, pd.Series, np.ndarray]:
+    """
+    Apply combined SMOTE + sample weighting enhancement for regression models.
+    
+    Args:
+        X: Feature matrix
+        y: Continuous target values
+        use_smote: Whether to apply SMOTE upsampling
+        positive_weight: Weight multiplier for positive samples
+        threshold: Threshold for defining positive class
+        config: Data balancing configuration
+        
+    Returns:
+        Tuple of (X_enhanced, y_enhanced, sample_weights)
+    """
+    if config is None:
+        config = get_default_config().data_balancing
+    
+    X_result, y_result = X.copy(), y.copy()
+    
+    # Step 1: Apply SMOTE if enabled
+    if use_smote and config.use_smote_for_regressors:
+        logger.info("🔄 Applying SMOTE for positive example upsampling...")
+        X_result, y_result = apply_smote_for_regression(
+            X_result, y_result,
+            threshold=threshold,
+            k_neighbors=config.smote_k_neighbors,
+            sampling_strategy=config.smote_sampling_strategy,
+            random_state=config.smote_random_state
+        )
+    
+    # Step 2: Create sample weights
+    if config.combine_smote_with_weighting:
+        sample_weights = np.where(y_result > threshold, positive_weight, 1.0)
+        pos_count = np.sum(y_result > threshold)
+        total_count = len(y_result)
+        logger.info(f"⚖️ Sample weighting: {pos_count}/{total_count} positive samples with {positive_weight}x weight")
+    else:
+        sample_weights = np.ones(len(y_result))
+        logger.info("⚖️ No sample weighting applied")
+    
+    return X_result, y_result, sample_weights

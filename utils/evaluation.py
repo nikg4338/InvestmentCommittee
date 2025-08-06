@@ -34,6 +34,60 @@ logger = logging.getLogger(__name__)
 if not RANKING_METRICS_AVAILABLE:
     logger.warning("⚠️  Ranking metrics not available - some evaluation features disabled")
 
+def convert_regression_ensemble_to_binary(model_predictions: Dict[str, np.ndarray], 
+                                        y_true: Optional[np.ndarray] = None,
+                                        optimize_thresholds: bool = True) -> Dict[str, Dict[str, Any]]:
+    """
+    Convert regression predictions to binary decisions with optimized thresholds.
+    
+    Args:
+        model_predictions: Dictionary mapping model names to continuous predictions
+        y_true: True labels for threshold optimization (optional)
+        optimize_thresholds: Whether to optimize thresholds using y_true
+        
+    Returns:
+        Dictionary with binary predictions and threshold information
+    """
+    results = {}
+    
+    for model_name, predictions in model_predictions.items():
+        # Check if this is a regression model
+        is_regressor = 'regressor' in model_name.lower()
+        
+        if is_regressor and y_true is not None and optimize_thresholds:
+            # Find optimal threshold for regression model
+            try:
+                optimal_threshold, best_f1 = find_optimal_threshold(
+                    (y_true > 0).astype(int),  # Convert continuous targets to binary
+                    predictions,
+                    metric='f1'
+                )
+            except Exception as e:
+                logger.warning(f"Threshold optimization failed for {model_name}: {e}")
+                optimal_threshold = 0.0  # Default for regression (positive returns)
+                best_f1 = 0.0
+        elif is_regressor:
+            # Default threshold for regression without optimization
+            optimal_threshold = 0.0
+            best_f1 = None
+        else:
+            # Classification model - default threshold
+            optimal_threshold = 0.5
+            best_f1 = None
+        
+        # Convert to binary predictions
+        binary_predictions = (predictions > optimal_threshold).astype(int)
+        
+        results[model_name] = {
+            'predictions': binary_predictions,
+            'continuous_predictions': predictions,
+            'threshold': optimal_threshold,
+            'f1_score': best_f1,
+            'is_regressor': is_regressor
+        }
+    
+    return results
+
 def optimize_ensemble_thresholds(y_true: np.ndarray, 
                                 model_predictions: Dict[str, np.ndarray],
                                 metric: str = 'f1') -> Dict[str, Tuple[float, float]]:
@@ -88,6 +142,22 @@ def compute_classification_metrics(y_true: np.ndarray, y_pred: np.ndarray,
     metrics = {}
     
     try:
+        # Ensure inputs are binary for classification metrics
+        y_true = np.asarray(y_true).astype(int)
+        y_pred = np.asarray(y_pred).astype(int)
+        
+        # Validate that inputs are binary (0 or 1)
+        if not (np.all(np.isin(y_true, [0, 1])) and np.all(np.isin(y_pred, [0, 1]))):
+            logger.warning(f"Non-binary values detected in {model_name}. Converting continuous to binary using threshold 0.5")
+            if y_proba is not None:
+                y_pred = (y_proba > 0.5).astype(int)
+            else:
+                # For continuous y_pred, apply threshold
+                y_pred = (y_pred > 0.5).astype(int)
+            # For continuous y_true, apply threshold (though this shouldn't happen in normal cases)
+            if not np.all(np.isin(y_true, [0, 1])):
+                y_true = (y_true > 0.0).astype(int)
+        
         # Basic classification metrics
         metrics['accuracy'] = accuracy_score(y_true, y_pred)
         metrics['precision'] = precision_score(y_true, y_pred, zero_division=0.0)

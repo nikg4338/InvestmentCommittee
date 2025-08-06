@@ -11,7 +11,7 @@ import logging
 import time
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List, Optional, Union
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.model_selection import StratifiedKFold
 
@@ -19,9 +19,16 @@ from sklearn.model_selection import StratifiedKFold
 from models.xgboost_model import XGBoostModel
 from models.lightgbm_model import LightGBMModel
 from models.lightgbm_regressor import LightGBMRegressor
+from models.lightgbm_quantile_regressor import LightGBMQuantileRegressor
 from models.catboost_model import CatBoostModel
 from models.random_forest_model import RandomForestModel
 from models.svc_model import SVMClassifier
+
+# Regressor model imports
+from models.xgboost_regressor import XGBoostRegressorModel
+from models.catboost_regressor import CatBoostRegressorModel
+from models.random_forest_regressor import RandomForestRegressorModel
+from models.svm_regressor import SVMRegressorModel
 
 from utils.data_splitting import prepare_cv_data
 from utils.sampling import prepare_balanced_data
@@ -36,14 +43,131 @@ from utils.pipeline_improvements import (
 
 logger = logging.getLogger(__name__)
 
+def get_model_predictions_safe(model, X: pd.DataFrame, model_name: str) -> np.ndarray:
+    """
+    Safely get predictions from a model, handling both classification and regression.
+    
+    Args:
+        model: Trained model instance
+        X: Input features
+        model_name: Name of the model for identification
+        
+    Returns:
+        Predictions array
+    """
+    try:
+        if is_regressor_model(model_name):
+            # For regressors, use predict method directly
+            return model.predict(X)
+        else:
+            # For classifiers, use predict_proba and extract positive class
+            if hasattr(model, 'predict_proba'):
+                proba = model.predict_proba(X)
+                return proba[:, -1] if proba.ndim > 1 else proba
+            else:
+                return model.predict(X)
+    except Exception as e:
+        logger.warning(f"Error getting predictions from {model_name}: {e}")
+        return np.zeros(len(X))
+
+def is_regressor_model(model_name: str) -> bool:
+    """
+    Check if a model name corresponds to a regression model.
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        True if it's a regression model, False otherwise
+    """
+    return 'regressor' in model_name.lower() or model_name.endswith('_regressor')
+
+def is_regressor_model(model_name: str) -> bool:
+    """
+    Check if a model name corresponds to a regression model.
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        True if it's a regression model, False otherwise
+    """
+    return 'regressor' in model_name.lower()
+
+def is_quantile_model(model_name: str) -> bool:
+    """Check if a model name corresponds to a quantile regression model"""
+    return 'quantile' in model_name.lower()
+
+def get_model_predictions_safe(model, X: pd.DataFrame, model_name: str = "") -> Union[np.ndarray, Dict[float, np.ndarray]]:
+    """
+    Get predictions from a model, handling classification, regression, and quantile regression.
+    
+    Args:
+        model: Trained model instance
+        X: Input features
+        model_name: Name of the model for logging
+        
+    Returns:
+        Probability scores for classification, continuous predictions for regression,
+        or dictionary of quantile predictions for quantile regression
+    """
+    try:
+        is_regressor = is_regressor_model(model_name)
+        is_quantile = is_quantile_model(model_name)
+        
+        # Ensure DataFrame has correct dtypes for LightGBM models
+        if 'lightgbm' in model_name.lower() and isinstance(X, pd.DataFrame):
+            X_clean = X.copy()
+            # Convert to numeric dtypes that LightGBM accepts
+            for col in X_clean.columns:
+                if X_clean[col].dtype == 'object':
+                    try:
+                        X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
+                    except:
+                        pass
+                # Ensure dtypes are int, float, or bool
+                if X_clean[col].dtype not in ['int64', 'int32', 'float64', 'float32', 'bool']:
+                    X_clean[col] = X_clean[col].astype('float64')
+            X = X_clean
+        
+        if is_quantile:
+            # For quantile regressors, return dictionary of quantile predictions
+            predictions = model.predict(X)
+            if isinstance(predictions, dict):
+                return predictions
+            else:
+                # If not returning dict, assume it's median quantile
+                return {0.5: predictions}
+        elif is_regressor:
+            # For regressors, use the predict method directly
+            predictions = model.predict(X)
+            return predictions
+        else:
+            # For classifiers, try predict_proba first, fall back to predict
+            if hasattr(model, 'predict_proba'):
+                return model.predict_proba(X)[:, 1]
+            else:
+                return model.predict(X)
+    except Exception as e:
+        logger.warning(f"Error getting predictions from {model_name}: {e}")
+        return np.zeros(len(X))
+
 # Model registry for easy access
 MODEL_REGISTRY = {
+    # Classification models
     'xgboost': XGBoostModel,
     'lightgbm': LightGBMModel,
-    'lightgbm_regressor': LightGBMRegressor,
     'catboost': CatBoostModel,
     'random_forest': RandomForestModel,
-    'svm': SVMClassifier
+    'svm': SVMClassifier,
+    
+    # Regression models
+    'lightgbm_regressor': LightGBMRegressor,
+    'lightgbm_quantile_regressor': LightGBMQuantileRegressor,
+    'xgboost_regressor': XGBoostRegressorModel,
+    'catboost_regressor': CatBoostRegressorModel,
+    'random_forest_regressor': RandomForestRegressorModel,
+    'svm_regressor': SVMRegressorModel
 }
 
 def create_model_configs(config: Optional[TrainingConfig] = None) -> Dict[str, Dict[str, Any]]:
@@ -112,20 +236,18 @@ def simple_train_test_stacking(X_train: pd.DataFrame, y_train: pd.Series,
             model = model_class()
             model.train(X_balanced, y_balanced)
             
-            # Get predictions
-            train_proba = model.predict_proba(X_balanced)
-            train_proba_1 = train_proba[:, -1] if train_proba.ndim > 1 else train_proba
-            
-            test_proba = model.predict_proba(X_test)
-            test_proba_1 = test_proba[:, -1] if test_proba.ndim > 1 else test_proba
+            # Get predictions using the safe prediction function
+            train_predictions = get_model_predictions_safe(model, X_balanced, model_name)
+            test_predictions = get_model_predictions_safe(model, X_test, model_name)
             
             # Store results
             trained_models[model_name] = {
                 'model': model,
                 'config': model_info,
-                'train_predictions': train_proba_1,
+                'train_predictions': train_predictions,
                 'train_labels': y_balanced,
-                'test_predictions': test_proba_1
+                'test_predictions': test_predictions,
+                'is_regressor': is_regressor_model(model_name)
             }
             
             duration = time.time() - start_time
@@ -236,26 +358,30 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 fold_model.train(X_fold_balanced, y_fold_balanced)
                 
                 # Predict on validation set (out-of-fold)
-                val_proba = fold_model.predict_proba(X_fold_val)
-                val_proba_1 = val_proba[:, -1] if val_proba.ndim > 1 else val_proba
+                val_predictions = get_model_predictions_safe(fold_model, X_fold_val, model_name)
                 
                 # Compute optimal threshold for this fold
                 try:
                     from train_models import compute_optimal_threshold
-                    fold_threshold = compute_optimal_threshold(y_fold_val, val_proba_1, metric='pr_auc')
+                    if is_regressor_model(model_name):
+                        # For regressors, convert to binary for threshold computation
+                        binary_true = (y_fold_val > 0).astype(int)
+                        fold_threshold = compute_optimal_threshold(binary_true, val_predictions, metric='pr_auc')
+                    else:
+                        fold_threshold = compute_optimal_threshold(y_fold_val, val_predictions, metric='pr_auc')
                     model_thresholds[model_name].append(fold_threshold)
                     logger.info(f"    Fold {fold + 1} optimal threshold: {fold_threshold:.4f}")
                 except Exception as e:
                     logger.warning(f"    Failed to compute threshold for fold {fold + 1}: {e}")
-                    model_thresholds[model_name].append(0.5)
+                    fold_threshold = 0.5 if not is_regressor_model(model_name) else 0.0
+                    model_thresholds[model_name].append(fold_threshold)
                 
                 # Store OOF predictions
-                train_meta_features[val_idx, model_idx] = val_proba_1
+                train_meta_features[val_idx, model_idx] = val_predictions
                 
                 # Predict on test set
-                test_proba = fold_model.predict_proba(X_test)
-                test_proba_1 = test_proba[:, -1] if test_proba.ndim > 1 else test_proba
-                fold_predictions.append(test_proba_1)
+                test_predictions = get_model_predictions_safe(fold_model, X_test, model_name)
+                fold_predictions.append(test_predictions)
                 
                 fold_models.append(fold_model)
             
@@ -408,9 +534,8 @@ def create_ensemble_predictions(trained_models: Dict[str, Any],
             fold_predictions = []
             for fold_model in model_data['models']:
                 try:
-                    test_proba = fold_model.predict_proba(X_test)
-                    test_proba_1 = test_proba[:, -1] if test_proba.ndim > 1 else test_proba
-                    fold_predictions.append(test_proba_1)
+                    test_predictions = get_model_predictions_safe(fold_model, X_test, model_name)
+                    fold_predictions.append(test_predictions)
                 except Exception as e:
                     logger.warning(f"Prediction failed for {model_name} fold model: {e}")
                     continue
@@ -422,9 +547,8 @@ def create_ensemble_predictions(trained_models: Dict[str, Any],
         elif 'model' in model_data:
             # Single model prediction
             try:
-                test_proba = model_data['model'].predict_proba(X_test)
-                test_proba_1 = test_proba[:, -1] if test_proba.ndim > 1 else test_proba
-                base_predictions[model_name] = test_proba_1
+                test_predictions = get_model_predictions_safe(model_data['model'], X_test, model_name)
+                base_predictions[model_name] = test_predictions
             except Exception as e:
                 logger.warning(f"Prediction failed for {model_name}: {e}")
     

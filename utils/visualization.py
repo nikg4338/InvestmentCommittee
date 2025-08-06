@@ -63,6 +63,12 @@ def plot_confusion_matrices(confusion_matrices: Dict[str, np.ndarray],
 
     # Calculate grid dimensions
     n_models = len(model_names)
+    
+    # Handle edge case: no models
+    if n_models == 0:
+        logger.warning("No models provided for confusion matrix visualization")
+        return None
+    
     n_cols = min(3, n_models)  # Max 3 columns
     n_rows = (n_models + n_cols - 1) // n_cols
     

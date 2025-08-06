@@ -270,43 +270,223 @@ class AlpacaDataCollector:
         logger.info(f"   Volatility regime distribution: {df['volatility_regime'].value_counts().to_dict()}")
         logger.info(f"   Composite regime score range: [{df['composite_regime_score'].min():.1f}, {df['composite_regime_score'].max():.1f}]")
         
+        # === ENHANCED FEATURE ENGINEERING ===
+        
+        # 11. TIME-DECAY AND GREEKS-INSPIRED FEATURES
+        logger.info("📈 Adding time-decay and Greeks-inspired features...")
+        
+        # Theta-like feature: rate of price change acceleration
+        df['price_acceleration'] = df['close'].diff().diff()
+        df['price_theta'] = df['price_acceleration'] / df['close']
+        
+        # Vega-like feature: volatility sensitivity
+        df['vol_sensitivity'] = df['volatility_20d'].diff() / df['volatility_20d'].shift(1)
+        df['price_vol_correlation'] = df['close'].rolling(20).corr(df['volatility_20d'])
+        
+        # Delta-like feature: price momentum sensitivity
+        df['delta_proxy'] = df['price_change_1d'] / df['volatility_20d']
+        
+        # Gamma-like feature: acceleration of momentum
+        df['momentum_acceleration'] = df['delta_proxy'].diff()
+        
+        # Implied volatility proxy using high-low ranges
+        df['implied_vol_proxy'] = (df['high'] - df['low']) / df['close']
+        df['implied_vol_change'] = df['implied_vol_proxy'].diff()
+        df['implied_vol_percentile'] = df['implied_vol_proxy'].rolling(50).rank(pct=True)
+        
+        # 12. MARKET REGIME AND MACRO FEATURES
+        logger.info("🌍 Adding market regime and macro context features...")
+        
+        # VIX-like volatility regime (using rolling volatility percentiles)
+        df['vol_percentile_50d'] = df['volatility_20d'].rolling(50).rank(pct=True)
+        df['vol_regime_high'] = (df['vol_percentile_50d'] > 0.8).astype(int)
+        df['vol_regime_low'] = (df['vol_percentile_50d'] < 0.2).astype(int)
+        
+        # ENHANCED: VIX top 10 percentile flag (extreme volatility periods)
+        df['vix_top_10pct'] = (df['vol_percentile_50d'] > 0.9).astype(int)
+        df['vix_bottom_10pct'] = (df['vol_percentile_50d'] < 0.1).astype(int)
+        
+        # ENHANCED: Time decay features for options-like strategies
+        df['time_to_expiry_proxy'] = np.arange(len(df)) % 21  # Proxy for days until monthly expiry
+        df['theta_decay'] = df['implied_vol_proxy'] * np.sqrt(df['time_to_expiry_proxy'] / 21.0)  # Time decay simulation
+        df['theta_acceleration'] = df['theta_decay'].diff()  # Rate of time decay change
+        
+        # ENHANCED: Spread width features (distance of strikes / underlying move)
+        df['atr_20d'] = df['hl_ratio'].rolling(20).mean()  # Average True Range proxy
+        df['spread_width_proxy'] = df['atr_20d'] / df['close']  # Normalized spread width
+        df['move_vs_spread'] = abs(df['price_change_1d']) / (df['spread_width_proxy'] + 1e-8)  # How much moved vs expected
+        df['spread_efficiency'] = df['spread_width_proxy'] / (df['volatility_20d'] + 1e-8)  # Spread width efficiency
+        
+        # Market trend strength (proxy using price vs moving averages)
+        if 'sma_50' in df.columns and 'sma_200' in df.columns:
+            df['market_trend_strength'] = df['close'].rolling(20).corr(df['sma_50'])
+            df['long_term_trend'] = (df['sma_50'] > df['sma_200']).astype(int)
+        else:
+            df['market_trend_strength'] = df['close'].rolling(20).corr(df['sma_20'])
+            df['long_term_trend'] = (df['sma_20'] > df['sma_10']).astype(int)
+        
+        # Sector momentum proxy (relative to own history)
+        df['relative_strength'] = df['close'] / df['close'].rolling(252).mean() if len(df) >= 252 else df['close'] / df['close'].rolling(50).mean()
+        df['momentum_percentile'] = df['price_change_20d'].rolling(100).rank(pct=True)
+        
+        # 13. EARNINGS AND FUNDAMENTAL PROXIES
+        logger.info("💼 Adding earnings and fundamental proxies...")
+        
+        # Earnings cycle proxies (quarterly patterns)
+        df['quarter'] = pd.to_datetime(df.index).quarter if hasattr(df.index, 'quarter') else 1
+        df['month'] = pd.to_datetime(df.index).month if hasattr(df.index, 'month') else 1
+        df['earnings_season'] = df['month'].isin([1, 4, 7, 10]).astype(int)  # Earnings months
+        
+        # Volume-price divergence (fundamental strength indicator)
+        df['volume_price_divergence'] = df['volume_ratio'] * df['price_change_1d']
+        df['accumulation_distribution'] = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low'] + 1e-8) * df['volume']
+        df['accumulation_distribution_sma'] = df['accumulation_distribution'].rolling(20).mean()
+        
+        # 14. TECHNICAL PATTERN RECOGNITION
+        logger.info("🔍 Adding technical pattern recognition features...")
+        
+        # Candlestick patterns
+        df['doji'] = (abs(df['open'] - df['close']) / (df['high'] - df['low'] + 1e-8) < 0.1).astype(int)
+        df['hammer'] = ((df['close'] > df['open']) & ((df['open'] - df['low']) > 2 * (df['close'] - df['open'])) & ((df['high'] - df['close']) < 0.1 * (df['close'] - df['open']))).astype(int)
+        df['shooting_star'] = ((df['open'] > df['close']) & ((df['high'] - df['open']) > 2 * (df['open'] - df['close'])) & ((df['close'] - df['low']) < 0.1 * (df['open'] - df['close']))).astype(int)
+        
+        # Support/Resistance levels
+        df['resistance_level'] = df['high'].rolling(20).max()
+        df['support_level'] = df['low'].rolling(20).min()
+        df['distance_to_resistance'] = (df['resistance_level'] - df['close']) / df['close']
+        df['distance_to_support'] = (df['close'] - df['support_level']) / df['close']
+        
+        # 15. VOLATILITY CLUSTERING AND ARCH EFFECTS
+        logger.info("📊 Adding volatility clustering features...")
+        
+        # GARCH-like features
+        df['vol_clustering'] = df['volatility_5d'].rolling(10).std()
+        df['vol_persistence'] = df['volatility_20d'].rolling(5).mean() / df['volatility_20d'].rolling(20).mean()
+        
+        # Volatility skew
+        df['vol_skew'] = df['price_change_1d'].rolling(20).skew()
+        df['vol_kurtosis'] = df['price_change_1d'].rolling(20).apply(lambda x: x.kurtosis())
+        
+        # 16. LIQUIDITY AND MICROSTRUCTURE FEATURES
+        logger.info("💧 Adding liquidity and microstructure features...")
+        
+        # Bid-ask spread proxy
+        df['spread_proxy'] = (df['high'] - df['low']) / df['close']
+        df['spread_volatility'] = df['spread_proxy'].rolling(10).std()
+        
+        # Price impact proxy
+        df['price_impact'] = abs(df['price_change_1d']) / (df['volume'] / df['volume'].rolling(20).mean() + 1e-8)
+        
+        # Amihud illiquidity measure proxy
+        df['illiquidity_proxy'] = abs(df['price_change_1d']) / (df['volume'] * df['close'] + 1e-8)
+        
+        # 17. MOMENTUM AND MEAN REVERSION FEATURES
+        logger.info("🔄 Adding momentum and mean reversion features...")
+        
+        # Multiple timeframe momentum
+        df['momentum_3d'] = df['close'].pct_change(3)
+        df['momentum_7d'] = df['close'].pct_change(7)
+        df['momentum_14d'] = df['close'].pct_change(14)
+        df['momentum_21d'] = df['close'].pct_change(21)
+        
+        # Mean reversion indicators
+        df['mean_reversion_5d'] = df['close'] / df['close'].rolling(5).mean() - 1
+        df['mean_reversion_20d'] = df['close'] / df['close'].rolling(20).mean() - 1
+        
+        # Momentum consistency
+        momentum_cols = ['momentum_3d', 'momentum_7d', 'momentum_14d', 'momentum_21d']
+        df['momentum_consistency'] = df[momentum_cols].apply(lambda x: (x > 0).sum(), axis=1)
+        
+        # 18. CORRELATION AND BETA FEATURES
+        logger.info("🔗 Adding correlation and systematic risk features...")
+        
+        # Beta to market proxy (using own price as market proxy - simplified)
+        market_returns = df['price_change_1d'].rolling(252).mean() if len(df) >= 252 else df['price_change_1d'].rolling(50).mean()
+        df['beta_proxy'] = df['price_change_1d'].rolling(60).cov(market_returns) / market_returns.rolling(60).var()
+        
+        # Correlation stability
+        df['correlation_stability'] = df['price_change_1d'].rolling(20).corr(df['price_change_1d'].shift(1))
+        
+        # 19. NEWS AND SENTIMENT PROXIES
+        logger.info("📰 Adding news and sentiment proxies...")
+        
+        # Extreme price movements (news proxy)
+        df['extreme_move_up'] = (df['price_change_1d'] > df['price_change_1d'].rolling(60).quantile(0.95)).astype(int)
+        df['extreme_move_down'] = (df['price_change_1d'] < df['price_change_1d'].rolling(60).quantile(0.05)).astype(int)
+        
+        # Gap analysis (potential news events)
+        df['overnight_gap'] = (df['open'] - df['close'].shift(1)) / df['close'].shift(1)
+        df['gap_magnitude'] = abs(df['overnight_gap'])
+        df['gap_follow_through'] = df['overnight_gap'] * df['price_change_1d']  # Gap continuation
+        
+        # 20. COMPOSITE SIGNAL FEATURES
+        logger.info("🎯 Creating composite signal features...")
+        
+        # Technical strength composite
+        technical_signals = ['momentum_regime', 'macd_regime', 'trend_regime']
+        df['technical_strength'] = df[technical_signals].sum(axis=1)
+        
+        # Risk-adjusted returns
+        df['risk_adjusted_return_5d'] = df['momentum_3d'] / (df['volatility_5d'] + 1e-8)
+        df['risk_adjusted_return_20d'] = df['momentum_7d'] / (df['volatility_20d'] + 1e-8)
+        
+        # Quality score (combination of multiple factors)
+        quality_factors = ['vol_regime_low', 'momentum_consistency', 'trend_regime_stability']
+        df['quality_score'] = df[quality_factors].sum(axis=1)
+        
+        logger.info(f"🎉 Enhanced feature engineering complete!")
+        logger.info(f"   📊 Total features: {len(df.columns)}")
+        logger.info(f"   🔧 Greeks-inspired features: price_theta, vol_sensitivity, delta_proxy, momentum_acceleration")
+        logger.info(f"   🌍 Market regime features: vol_percentile_50d, market_trend_strength, relative_strength")
+        logger.info(f"   💼 Fundamental proxies: earnings_season, accumulation_distribution, volume_price_divergence")
+        logger.info(f"   🔍 Pattern recognition: candlestick patterns, support/resistance levels")
+        logger.info(f"   📊 Advanced analytics: volatility clustering, liquidity proxies, correlation features")
+        
         return df
     
     def create_target_variable(self, df: pd.DataFrame, symbol: str, use_regression: bool = True, 
                              target_horizon: int = 3, 
-                             create_all_horizons: bool = True) -> Union[pd.Series, pd.DataFrame]:
+                             create_all_horizons: bool = True,
+                             target_strategy: str = 'top_percentile') -> Union[pd.Series, pd.DataFrame]:
         """
-        Create target variable(s) - either regression (returns) or classification (binary).
+        Create enhanced target variable(s) with improved positive sample rate and richer patterns.
         
         Args:
             df: DataFrame with price data and indicators
             symbol: Stock symbol
-            use_regression: If True, use returns; if False, use binary classification
+            use_regression: If True, use returns; if False, use enhanced classification
             target_horizon: Primary target horizon in days (default: 3 days)
-            create_all_horizons: If True, create 1d, 3d, 5d, 10d targets simultaneously
+            create_all_horizons: If True, create multiple horizons including 7, 14, 21 days
+            target_strategy: Strategy for target creation ('top_percentile', 'multi_class', 'quantile_buckets')
             
         Returns:
             Series with single target OR DataFrame with multiple target columns
         """
         if use_regression:
-            # Regression approach: predict daily returns (normalized by holding period)
+            # Keep regression approach but add enhanced sampling support
             if create_all_horizons:
-                # Create multiple target horizons for ensemble training
-                horizons = [1, 3, 5, 10]
+                # Extended horizons including longer holding periods
+                horizons = [1, 3, 5, 7, 10, 14, 21]  # Added 7, 14, 21-day horizons
                 target_columns = {}
                 
                 for h in horizons:
                     return_col = f'target_{h}d_return'
                     target_columns[return_col] = self._create_regression_target(df, symbol, h)
                 
+                # Add enhanced binary targets for ensemble diversity
+                for h in horizons:
+                    binary_col = f'target_{h}d_enhanced'
+                    target_columns[binary_col] = self._create_enhanced_target(df, symbol, h, target_strategy)
+                
                 # Create multi-target DataFrame
                 target_df = pd.DataFrame(target_columns, index=df.index)
                 
-                logger.info(f"📊 Created {len(horizons)} regression targets for {symbol}")
+                logger.info(f"📊 Created {len(horizons)} regression + {len(horizons)} enhanced targets for {symbol}")
                 for col in target_df.columns:
-                    valid_values = target_df[col].dropna()
-                    if len(valid_values) > 0:
-                        logger.info(f"   {col}: mean={valid_values.mean():.4f}, std={valid_values.std():.4f}")
+                    if 'return' in col:
+                        valid_values = target_df[col].dropna()
+                        if len(valid_values) > 0:
+                            logger.info(f"   {col}: mean={valid_values.mean():.4f}, std={valid_values.std():.4f}")
                 
                 return target_df
             
@@ -322,28 +502,134 @@ class AlpacaDataCollector:
                 return target_series
         
         else:
-            # Classification approach: binary trade eligibility
+            # Use enhanced classification strategies
             if create_all_horizons:
-                # Create binary targets for multiple horizons
-                horizons = [1, 3, 5, 10]
+                # Extended horizons including longer holding periods
+                horizons = [1, 3, 5, 7, 10, 14, 21]
                 target_columns = {}
                 
                 for h in horizons:
-                    binary_col = f'target_{h}d_binary'
-                    target_columns[binary_col] = self._create_binary_target(df, symbol, h)
+                    enhanced_col = f'target_{h}d_enhanced'
+                    target_columns[enhanced_col] = self._create_enhanced_target(df, symbol, h, target_strategy)
                 
                 target_df = pd.DataFrame(target_columns, index=df.index)
-                logger.info(f"📊 Created {len(horizons)} binary targets for {symbol}")
+                logger.info(f"📊 Created {len(horizons)} enhanced classification targets for {symbol}")
                 
                 return target_df
             else:
+                return self._create_enhanced_target(df, symbol, target_horizon, target_strategy)
                 return self._create_binary_target(df, symbol, target_horizon)
+    
+    def _create_enhanced_target(self, df: pd.DataFrame, symbol: str, target_horizon: int = 3, 
+                              target_strategy: str = 'top_percentile') -> pd.Series:
+        """
+        Create enhanced target variable using various strategies for better model learning.
+        
+        Args:
+            df: DataFrame with price data
+            symbol: Stock symbol
+            target_horizon: Target horizon in days
+            target_strategy: Strategy to use ('top_percentile', 'multi_class', 'quantile_buckets')
+            
+        Returns:
+            Enhanced target series
+        """
+        # Calculate forward returns
+        forward_returns = (df['close'].shift(-target_horizon) / df['close']) - 1
+        forward_returns = forward_returns.dropna()
+        
+        if target_strategy == 'top_percentile':
+            # Top 5-10% labeling strategy for better positive rate
+            top_percentile = 90  # Top 10% as positive
+            bottom_percentile = 20  # Bottom 20% as negative
+            
+            if len(forward_returns) > 0:
+                top_threshold = forward_returns.quantile(top_percentile / 100)
+                bottom_threshold = forward_returns.quantile(bottom_percentile / 100)
+                
+                targets = []
+                for i in range(len(df)):
+                    if i >= len(df) - target_horizon:
+                        targets.append(0)
+                        continue
+                        
+                    future_return = forward_returns.iloc[i] if i < len(forward_returns) else np.nan
+                    
+                    if pd.isna(future_return):
+                        targets.append(0)
+                    elif future_return >= top_threshold:
+                        targets.append(1)  # Top performers
+                    else:
+                        targets.append(0)  # Rest as negative
+                
+                positive_rate = sum(targets) / len(targets) if len(targets) > 0 else 0
+                logger.info(f"📊 Top {100-top_percentile}% strategy for {symbol}: {sum(targets)}/{len(targets)} positives ({100*positive_rate:.1f}%)")
+                logger.info(f"   Thresholds: top={top_threshold:.4f}, bottom={bottom_threshold:.4f}")
+        
+        elif target_strategy == 'multi_class':
+            # Multi-class strategy: strong loss / neutral / strong gain
+            if len(forward_returns) > 0:
+                strong_gain_threshold = forward_returns.quantile(0.80)  # Top 20%
+                strong_loss_threshold = forward_returns.quantile(0.20)  # Bottom 20%
+                
+                targets = []
+                for i in range(len(df)):
+                    if i >= len(df) - target_horizon:
+                        targets.append(1)  # Neutral default
+                        continue
+                        
+                    future_return = forward_returns.iloc[i] if i < len(forward_returns) else np.nan
+                    
+                    if pd.isna(future_return):
+                        targets.append(1)  # Neutral
+                    elif future_return >= strong_gain_threshold:
+                        targets.append(2)  # Strong gain
+                    elif future_return <= strong_loss_threshold:
+                        targets.append(0)  # Strong loss
+                    else:
+                        targets.append(1)  # Neutral
+                
+                class_counts = pd.Series(targets).value_counts().sort_index()
+                logger.info(f"📊 Multi-class for {symbol}: Loss={class_counts.get(0,0)}, Neutral={class_counts.get(1,0)}, Gain={class_counts.get(2,0)}")
+        
+        elif target_strategy == 'quantile_buckets':
+            # Quantile buckets strategy for richer patterns
+            if len(forward_returns) > 0:
+                # Create 5 quantile buckets
+                targets = []
+                for i in range(len(df)):
+                    if i >= len(df) - target_horizon:
+                        targets.append(2)  # Middle bucket default
+                        continue
+                        
+                    future_return = forward_returns.iloc[i] if i < len(forward_returns) else np.nan
+                    
+                    if pd.isna(future_return):
+                        targets.append(2)  # Middle bucket
+                    else:
+                        # Assign to quantile bucket (0-4)
+                        percentile = (forward_returns <= future_return).mean()
+                        if percentile <= 0.2:
+                            targets.append(0)  # Bottom quintile
+                        elif percentile <= 0.4:
+                            targets.append(1)  # Second quintile
+                        elif percentile <= 0.6:
+                            targets.append(2)  # Middle quintile
+                        elif percentile <= 0.8:
+                            targets.append(3)  # Fourth quintile
+                        else:
+                            targets.append(4)  # Top quintile
+                
+                bucket_counts = pd.Series(targets).value_counts().sort_index()
+                logger.info(f"📊 Quantile buckets for {symbol}: {dict(bucket_counts)}")
+        
+        return pd.Series(targets, index=df.index)
     
     def _create_regression_target(self, df: pd.DataFrame, symbol: str, target_horizon: int = 3) -> pd.Series:
         """Create regression target based on daily returns normalized by holding period."""
         targets = []
         
-        # Calculate forward returns
+        # Calculate forward returns (equivalent to pnl_ratio)
         forward_returns = (df['close'].shift(-target_horizon) / df['close']) - 1
         
         for i in range(len(df)):
@@ -355,7 +641,8 @@ class AlpacaDataCollector:
             future_return = forward_returns.iloc[i]
             
             if not pd.isna(future_return):
-                # Daily return: normalize by holding period
+                # Daily return: equivalent to pnl_ratio / holding_days
+                # This is the normalized daily return target
                 daily_return = future_return / target_horizon
                 targets.append(daily_return)
             else:
@@ -363,7 +650,7 @@ class AlpacaDataCollector:
         
         # Remove NaN values for statistics
         valid_targets = [t for t in targets if not pd.isna(t)]
-        logger.info(f"📊 Created regression target for {symbol}: {len(valid_targets)}/{len(targets)} valid samples, "
+        logger.info(f"📊 Created daily_return target for {symbol}: {len(valid_targets)}/{len(targets)} valid samples, "
                    f"mean={np.mean(valid_targets):.4f}, std={np.std(valid_targets):.4f}")
         return pd.Series(targets, index=df.index)
     
@@ -396,76 +683,181 @@ class AlpacaDataCollector:
         logger.info(f"📊 Created binary target for {symbol}: {sum(targets)}/{len(targets)} positives ({100*sum(targets)/len(targets):.1f}%)")
         return pd.Series(targets, index=df.index)
     
-    def engineer_features_for_symbol(self, symbol: str, days: int = 60) -> Optional[pd.DataFrame]:
+    def _add_daily_return_columns(self, df: pd.DataFrame, target_horizon: int = 3) -> pd.DataFrame:
         """
-        Engineer complete feature set for a single symbol.
+        Add pnl_ratio and daily_return columns as specified in the migration instructions.
+        
+        This method simulates the calculation that would be done with actual backtesting data:
+        df['pnl_ratio'] = df['exit_pnl'] / df['capital_required']
+        df['daily_return'] = df['pnl_ratio'] / df['holding_days']
+        
+        Args:
+            df: DataFrame with price data
+            target_horizon: Holding period in days (simulated holding_days)
+            
+        Returns:
+            DataFrame with additional pnl_ratio and daily_return columns
+        """
+        # Calculate forward returns to simulate pnl_ratio
+        df['pnl_ratio'] = (df['close'].shift(-target_horizon) / df['close']) - 1
+        
+        # Simulate holding_days (constant for this example)
+        df['holding_days'] = target_horizon
+        
+        # Calculate daily_return as specified in the instructions
+        df['daily_return'] = df['pnl_ratio'] / df['holding_days']
+        
+        logger.info(f"📊 Added daily_return columns: pnl_ratio mean={df['pnl_ratio'].mean():.4f}, "
+                   f"daily_return mean={df['daily_return'].mean():.4f}")
+        
+        return df
+    
+    def engineer_features_for_symbol(self, symbol: str, days: int = 730, 
+                                    use_enhanced_targets: bool = True,
+                                    target_strategy: str = 'top_percentile') -> Optional[pd.DataFrame]:
+        """
+        Engineer complete feature set for a single symbol with enhanced targets and features.
         
         Args:
             symbol: Stock symbol
-            days: Days of historical data
+            days: Days of historical data (extended to 730 for 24-month lookback)
+            use_enhanced_targets: Whether to use enhanced target strategies
+            target_strategy: Target strategy ('top_percentile', 'multi_class', 'quantile_buckets')
             
         Returns:
             DataFrame with engineered features or None if failed
         """
         try:
-            # Get historical data
+            # Get extended historical data (24-month lookback)
+            logger.info(f"🔄 Processing {symbol} with {days}-day extended lookback...")
             df = self.get_historical_data(symbol, days)
-            if df is None or len(df) < 20:
-                logger.warning(f"⚠️  Insufficient data for {symbol}")
+            
+            if df is None or len(df) < 50:  # Need minimum data for technical indicators
+                logger.warning(f"❌ Insufficient data for {symbol}")
                 return None
             
-            # Calculate technical indicators  
+            # Calculate enhanced technical indicators and features
             df = self.calculate_technical_indicators(df)
+            logger.info(f"✅ Enhanced features calculated for {symbol}: {len(df.columns)} total features")
             
-            # Create target variable
-            df['target'] = self.create_target_variable(df, symbol)
+            # Create enhanced target variables with multiple horizons
+            if use_enhanced_targets:
+                target_results = self.create_target_variable(
+                    df, symbol, 
+                    use_regression=True,  # Use regression for better patterns
+                    create_all_horizons=True,  # Create multiple horizons including 7, 14, 21 days
+                    target_strategy=target_strategy
+                )
+                
+                if isinstance(target_results, pd.DataFrame):
+                    # Multiple targets created - select primary and enhanced targets
+                    primary_target = 'target_3d_return'  # Primary 3-day return target
+                    enhanced_target = 'target_3d_enhanced'  # Enhanced binary target
+                    
+                    if primary_target in target_results.columns:
+                        df['target'] = target_results[primary_target]
+                    else:
+                        # Fallback to first return column
+                        return_cols = [col for col in target_results.columns if 'return' in col]
+                        if return_cols:
+                            df['target'] = target_results[return_cols[0]]
+                        else:
+                            logger.warning(f"No return columns found for {symbol}")
+                            return None
+                    
+                    # Add enhanced binary target for ensemble diversity
+                    if enhanced_target in target_results.columns:
+                        df['target_enhanced'] = target_results[enhanced_target]
+                    
+                    # Add all horizon targets for multi-horizon ensemble
+                    for col in target_results.columns:
+                        if col not in df.columns:
+                            df[col] = target_results[col]
+                
+                else:
+                    # Single target
+                    df['target'] = target_results
             
-            # Add symbol column
+            else:
+                # Use standard target creation
+                df['target'] = self.create_target_variable(df, symbol)
+            
+            # Add daily return columns for compatibility
+            df = self._add_daily_return_columns(df, target_horizon=3)
+            
+            # Add symbol identifier
             df['ticker'] = symbol
             
-            # Select feature columns (exclude raw OHLCV, keep engineered features)
-            feature_columns = [
-                'ticker', 'target',
-                'price_change_1d', 'price_change_5d', 'price_change_10d', 'price_change_20d',
-                'price_vs_sma5', 'price_vs_sma10', 'price_vs_sma20',
-                'volatility_5d', 'volatility_10d', 'volatility_20d',
-                'volume_ratio', 'hl_ratio', 'hl_ratio_5d',
-                'rsi_14', 'macd', 'macd_signal', 'macd_histogram',
-                'bb_position'
-            ]
+            # Select all feature columns (include all engineered features)
+            exclude_cols = ['ticker', 'target', 'target_enhanced', 'open', 'high', 'low', 'close', 'volume', 'trade_count', 'vwap']
+            feature_columns = [col for col in df.columns if col not in exclude_cols]
+            
+            # Add back essential columns
+            essential_cols = ['ticker', 'target']
+            if 'target_enhanced' in df.columns:
+                essential_cols.append('target_enhanced')
             
             # Filter to available columns and drop rows with NaN in key features
-            available_features = [col for col in feature_columns if col in df.columns]
-            result_df = df[available_features].copy()
+            all_columns = essential_cols + feature_columns
+            available_columns = [col for col in all_columns if col in df.columns]
+            result_df = df[available_columns].copy()
             
             # Keep only rows with non-null target and sufficient feature data
             result_df = result_df.dropna(subset=['target'])
-            result_df = result_df.dropna(thresh=len(available_features) * 0.8)  # At least 80% features non-null
+            result_df = result_df.dropna(thresh=len(available_columns) * 0.7)  # At least 70% features non-null
             
             if len(result_df) == 0:
-                logger.warning(f"⚠️  No valid rows after feature engineering for {symbol}")
+                logger.warning(f"❌ No valid rows after feature engineering for {symbol}")
                 return None
+            
+            # Final data quality check
+            valid_samples = len(result_df)
+            total_features = len(feature_columns)
+            
+            logger.info(f"✅ Feature engineering complete for {symbol}:")
+            logger.info(f"   📊 Valid samples: {valid_samples}")
+            logger.info(f"   📋 Total features: {total_features}")
+            
+            # Log target statistics
+            target_values = result_df['target'].dropna()
+            if len(target_values) > 0:
+                logger.info(f"   🎯 Target stats: mean={target_values.mean():.4f}, std={target_values.std():.4f}")
                 
-            logger.info(f"✅ Engineered {len(result_df)} samples for {symbol}")
+                # Check if enhanced target was created
+                if 'target_enhanced' in result_df.columns:
+                    enhanced_values = result_df['target_enhanced'].dropna()
+                    if len(enhanced_values) > 0:
+                        positive_rate = enhanced_values.mean() * 100
+                        logger.info(f"   🎯 Enhanced target positive rate: {positive_rate:.1f}%")
+            
             return result_df
             
         except Exception as e:
-            logger.error(f"❌ Failed to engineer features for {symbol}: {e}")
+            logger.error(f"❌ Feature engineering failed for {symbol}: {e}")
             return None
     
-    def collect_batch_data(self, batch_name: str, symbols: List[str], max_symbols: Optional[int] = None) -> pd.DataFrame:
+    def collect_batch_data(self, batch_name: str, symbols: List[str], 
+                         max_symbols: Optional[int] = None,
+                         use_enhanced_targets: bool = True,
+                         target_strategy: str = 'top_percentile',
+                         days: int = 730) -> pd.DataFrame:
         """
-        Collect and engineer features for a batch of symbols.
+        Collect and engineer features for a batch of symbols with enhanced targets.
         
         Args:
             batch_name: Name of the batch
             symbols: List of symbols in the batch
             max_symbols: Optional limit on number of symbols to process
+            use_enhanced_targets: Whether to use enhanced target strategies
+            target_strategy: Target strategy ('top_percentile', 'multi_class', 'quantile_buckets')
+            days: Days of historical data (default 730 for 24-month lookback)
             
         Returns:
             Combined DataFrame with all symbols' data
         """
-        logger.info(f"🔄 Processing batch {batch_name} with {len(symbols)} symbols...")
+        logger.info(f"� Processing batch {batch_name} with {len(symbols)} symbols...")
+        logger.info(f"   📊 Enhanced targets: {use_enhanced_targets} ({target_strategy})")
+        logger.info(f"   📅 Lookback period: {days} days")
         
         if max_symbols:
             symbols = symbols[:max_symbols]
@@ -473,22 +865,40 @@ class AlpacaDataCollector:
         
         batch_dataframes = []
         successful_symbols = 0
+        total_samples = 0
+        enhanced_target_stats = []
         
         for i, symbol in enumerate(symbols, 1):
             logger.info(f"🔄 Processing {symbol} ({i}/{len(symbols)})...")
             
             try:
-                symbol_df = self.engineer_features_for_symbol(symbol)
+                symbol_df = self.engineer_features_for_symbol(
+                    symbol, 
+                    days=days,
+                    use_enhanced_targets=use_enhanced_targets,
+                    target_strategy=target_strategy
+                )
+                
                 if symbol_df is not None and len(symbol_df) > 0:
                     batch_dataframes.append(symbol_df)
                     successful_symbols += 1
-                    logger.info(f"✅ {symbol}: {len(symbol_df)} samples")
+                    total_samples += len(symbol_df)
+                    
+                    # Track enhanced target statistics
+                    if 'target_enhanced' in symbol_df.columns:
+                        pos_rate = symbol_df['target_enhanced'].mean() * 100
+                        enhanced_target_stats.append({
+                            'symbol': symbol,
+                            'samples': len(symbol_df),
+                            'positive_rate': pos_rate
+                        })
+                    
+                    logger.info(f"✅ {symbol}: {len(symbol_df)} samples collected")
                 else:
-                    logger.warning(f"⚠️  {symbol}: No data")
+                    logger.warning(f"❌ {symbol}: No data collected")
                     
             except Exception as e:
-                logger.error(f"❌ {symbol}: {e}")
-                continue
+                logger.error(f"❌ Error processing {symbol}: {e}")
         
         if not batch_dataframes:
             logger.error(f"❌ No data collected for batch {batch_name}")
@@ -497,27 +907,58 @@ class AlpacaDataCollector:
         # Combine all symbol data
         combined_df = pd.concat(batch_dataframes, ignore_index=True)
         
-        logger.info(f"✅ Batch {batch_name} complete: {successful_symbols}/{len(symbols)} symbols, {len(combined_df)} total samples")
+        # Log comprehensive batch statistics
+        logger.info(f"🎉 Batch {batch_name} collection complete:")
+        logger.info(f"   ✅ Successful symbols: {successful_symbols}/{len(symbols)}")
+        logger.info(f"   📊 Total samples: {total_samples:,}")
+        logger.info(f"   📋 Features per sample: {len(combined_df.columns) - 2}")  # Exclude ticker and target
+        
+        # Enhanced target statistics
+        if enhanced_target_stats:
+            avg_pos_rate = np.mean([s['positive_rate'] for s in enhanced_target_stats])
+            logger.info(f"   🎯 Average enhanced target positive rate: {avg_pos_rate:.1f}%")
+            
+            # Show distribution of positive rates
+            pos_rates = [s['positive_rate'] for s in enhanced_target_stats]
+            logger.info(f"   📈 Enhanced target rate range: {min(pos_rates):.1f}% - {max(pos_rates):.1f}%")
+        
+        # Overall target statistics
+        if 'target' in combined_df.columns:
+            target_stats = combined_df['target'].describe()
+            logger.info(f"   📊 Target statistics:")
+            logger.info(f"      Mean: {target_stats['mean']:.4f}")
+            logger.info(f"      Std:  {target_stats['std']:.4f}")
+            logger.info(f"      Range: {target_stats['min']:.4f} to {target_stats['max']:.4f}")
         
         return combined_df
     
-    def collect_training_data(self, batch_numbers: List[int], max_symbols_per_batch: Optional[int] = 10) -> pd.DataFrame:
+    def collect_training_data(self, batch_numbers: List[int], 
+                            max_symbols_per_batch: Optional[int] = 10,
+                            use_enhanced_targets: bool = True,
+                            target_strategy: str = 'top_percentile',
+                            days: int = 730) -> pd.DataFrame:
         """
-        Collect training data for specified batches.
+        Collect training data for specified batches with enhanced targets.
         
         Args:
             batch_numbers: List of batch numbers to process
             max_symbols_per_batch: Optional limit on symbols per batch
+            use_enhanced_targets: Whether to use enhanced target strategies
+            target_strategy: Target strategy ('top_percentile', 'multi_class', 'quantile_buckets')
+            days: Days of historical data (default 730 for 24-month lookback)
             
         Returns:
             Combined DataFrame ready for training
         """
-        logger.info(f"🚀 Starting data collection for batches: {batch_numbers}")
+        logger.info(f"🚀 Starting enhanced data collection for batches: {batch_numbers}")
+        logger.info(f"   📊 Enhanced targets: {use_enhanced_targets} ({target_strategy})")
+        logger.info(f"   📅 Lookback period: {days} days")
         
         # Load stock batches
         batches = self.load_stock_batches()
         
         all_dataframes = []
+        total_symbols_processed = 0
         
         for batch_num in batch_numbers:
             batch_name = f"batch_{batch_num}"
@@ -527,10 +968,22 @@ class AlpacaDataCollector:
                 continue
             
             symbols = batches[batch_name]
-            batch_df = self.collect_batch_data(batch_name, symbols, max_symbols_per_batch)
+            logger.info(f"🔄 Processing {batch_name} with {len(symbols)} symbols...")
+            
+            batch_df = self.collect_batch_data(
+                batch_name, symbols, 
+                max_symbols=max_symbols_per_batch,
+                use_enhanced_targets=use_enhanced_targets,
+                target_strategy=target_strategy,
+                days=days
+            )
             
             if len(batch_df) > 0:
                 all_dataframes.append(batch_df)
+                total_symbols_processed += batch_df['ticker'].nunique()
+                logger.info(f"✅ {batch_name}: {len(batch_df)} samples from {batch_df['ticker'].nunique()} symbols")
+            else:
+                logger.warning(f"❌ {batch_name}: No data collected")
         
         if not all_dataframes:
             logger.error("❌ No training data collected")
@@ -542,6 +995,27 @@ class AlpacaDataCollector:
         # Final cleanup - use newer pandas syntax
         final_df = final_df.bfill().ffill()
         final_df = final_df.replace([np.inf, -np.inf], np.nan).dropna()
+        
+        # Log final statistics
+        logger.info(f"🎉 Enhanced data collection complete:")
+        logger.info(f"   📊 Total samples: {len(final_df):,}")
+        logger.info(f"   🏢 Total symbols: {final_df['ticker'].nunique()}")
+        logger.info(f"   📋 Total features: {len(final_df.columns) - 2}")  # Exclude ticker and target
+        
+        # Enhanced target statistics
+        if use_enhanced_targets and 'target_enhanced' in final_df.columns:
+            enhanced_pos_rate = final_df['target_enhanced'].mean() * 100
+            logger.info(f"   🎯 Enhanced target positive rate: {enhanced_pos_rate:.1f}%")
+        
+        # Standard target statistics
+        if 'target' in final_df.columns:
+            target_stats = final_df['target'].describe()
+            logger.info(f"   📈 Target statistics:")
+            logger.info(f"      Mean: {target_stats['mean']:.4f}")
+            logger.info(f"      Std:  {target_stats['std']:.4f}")
+            logger.info(f"      Range: {target_stats['min']:.4f} to {target_stats['max']:.4f}")
+        
+        return final_df
         
         # Print summary
         target_dist = final_df['target'].value_counts().to_dict()
