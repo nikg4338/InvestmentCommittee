@@ -12,12 +12,13 @@ import time
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Tuple, List, Optional
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.model_selection import StratifiedKFold
 
 # Model imports
 from models.xgboost_model import XGBoostModel
 from models.lightgbm_model import LightGBMModel
+from models.lightgbm_regressor import LightGBMRegressor
 from models.catboost_model import CatBoostModel
 from models.random_forest_model import RandomForestModel
 from models.svc_model import SVMClassifier
@@ -26,12 +27,20 @@ from utils.data_splitting import prepare_cv_data
 from utils.sampling import prepare_balanced_data
 from config.training_config import TrainingConfig, get_default_config
 
+# Import pipeline improvements
+from utils.pipeline_improvements import (
+    tune_with_optuna, calibrate_model, get_advanced_sampler,
+    create_time_series_splits, create_xgb_meta_model,
+    select_top_features_shap
+)
+
 logger = logging.getLogger(__name__)
 
 # Model registry for easy access
 MODEL_REGISTRY = {
     'xgboost': XGBoostModel,
     'lightgbm': LightGBMModel,
+    'lightgbm_regressor': LightGBMRegressor,
     'catboost': CatBoostModel,
     'random_forest': RandomForestModel,
     'svm': SVMClassifier
@@ -175,6 +184,7 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
     test_meta_features = np.zeros((len(X_test), n_models))
     
     trained_models = {}
+    model_thresholds = {name: [] for name in model_configs.keys()}  # Track optimal thresholds per fold
     
     # Train each model with OOF
     for model_idx, (model_name, model_info) in enumerate(model_configs.items()):
@@ -183,6 +193,19 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
         
         fold_predictions = []
         fold_models = []
+        
+        # Optuna hyperparameter tuning for supported models
+        optuna_params = {}
+        if model_name in ['random_forest', 'catboost'] and hasattr(config, 'enable_optuna') and config.enable_optuna:
+            try:
+                from train_models import optuna_tune_model
+                model_class = model_info['class']
+                logger.info(f"  🎯 Running Optuna hyperparameter tuning for {model_name}...")
+                optuna_params = optuna_tune_model(model_class, X_cv, y_cv, n_trials=10)
+                if optuna_params:
+                    logger.info(f"  ✓ Optuna found optimal params for {model_name}: {optuna_params}")
+            except Exception as e:
+                logger.warning(f"  ⚠️ Optuna tuning failed for {model_name}: {e}")
         
         try:
             # Cross-validation loop
@@ -193,6 +216,7 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 X_fold_train = X_cv.iloc[train_idx]
                 y_fold_train = y_cv.iloc[train_idx]
                 X_fold_val = X_cv.iloc[val_idx]
+                y_fold_val = y_cv.iloc[val_idx]
                 
                 # Balance training data for this fold
                 balance_method = model_info.get('balance_method', 'smote')
@@ -200,14 +224,30 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                     X_fold_train, y_fold_train, balance_method
                 )
                 
-                # Train model on this fold
+                # Train model on this fold with optional Optuna params
                 model_class = model_info['class']
-                fold_model = model_class()
+                if optuna_params:
+                    # Merge Optuna params with default config
+                    combined_params = {**model_info.get('params', {}), **optuna_params}
+                    fold_model = model_class(**combined_params)
+                else:
+                    fold_model = model_class()
+                
                 fold_model.train(X_fold_balanced, y_fold_balanced)
                 
                 # Predict on validation set (out-of-fold)
                 val_proba = fold_model.predict_proba(X_fold_val)
                 val_proba_1 = val_proba[:, -1] if val_proba.ndim > 1 else val_proba
+                
+                # Compute optimal threshold for this fold
+                try:
+                    from train_models import compute_optimal_threshold
+                    fold_threshold = compute_optimal_threshold(y_fold_val, val_proba_1, metric='pr_auc')
+                    model_thresholds[model_name].append(fold_threshold)
+                    logger.info(f"    Fold {fold + 1} optimal threshold: {fold_threshold:.4f}")
+                except Exception as e:
+                    logger.warning(f"    Failed to compute threshold for fold {fold + 1}: {e}")
+                    model_thresholds[model_name].append(0.5)
                 
                 # Store OOF predictions
                 train_meta_features[val_idx, model_idx] = val_proba_1
@@ -222,11 +262,18 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
             # Average test predictions across folds
             test_meta_features[:, model_idx] = np.mean(fold_predictions, axis=0)
             
-            # Store fold models
+            # Compute average optimal threshold for this model
+            avg_threshold = np.mean(model_thresholds[model_name]) if model_thresholds[model_name] else 0.5
+            logger.info(f"  📊 {model_name} average optimal threshold: {avg_threshold:.4f}")
+            
+            # Store fold models and metadata
             trained_models[model_name] = {
                 'models': fold_models,
                 'config': model_info,
-                'test_predictions': test_meta_features[:, model_idx]
+                'test_predictions': test_meta_features[:, model_idx],
+                'optimal_threshold': avg_threshold,
+                'fold_thresholds': model_thresholds[model_name],
+                'optuna_params': optuna_params
             }
             
             duration = time.time() - start_time
@@ -243,9 +290,9 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
     return train_meta_features, test_meta_features, trained_models
 
 def train_meta_model(meta_X: np.ndarray, meta_y: np.ndarray,
-                    config: Optional[TrainingConfig] = None) -> LogisticRegression:
+                    config: Optional[TrainingConfig] = None) -> Tuple[GradientBoostingClassifier, float]:
     """
-    Train meta-model on out-of-fold predictions.
+    Train meta-model on out-of-fold predictions with threshold optimization.
     
     Args:
         meta_X: Meta-features (out-of-fold predictions)
@@ -253,20 +300,21 @@ def train_meta_model(meta_X: np.ndarray, meta_y: np.ndarray,
         config: Training configuration
         
     Returns:
-        Trained meta-model
+        Tuple of (trained meta-model, optimal_threshold)
     """
     if config is None:
         config = get_default_config()
     
-    logger.info("Training meta-model...")
+    logger.info("Training meta-model with threshold optimization...")
     
     try:
-        meta_model = LogisticRegression(
-            random_state=config.random_state,
-            C=config.meta_model.regularization_c,
-            class_weight=config.meta_model.class_weight,
-            solver=config.meta_model.solver,
-            max_iter=config.meta_model.max_iter
+        from utils.evaluation import find_optimal_threshold
+        
+        meta_model = GradientBoostingClassifier(
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=3,
+            random_state=config.random_state
         )
         
         # Validate input consistency
@@ -280,20 +328,34 @@ def train_meta_model(meta_X: np.ndarray, meta_y: np.ndarray,
         
         meta_model.fit(meta_X, meta_y)
         
+        # Get training probabilities for threshold optimization
+        meta_train_proba = meta_model.predict_proba(meta_X)[:, 1]
+        
+        # Analyze probability distribution
+        logger.info(f"Meta-model probability distribution:")
+        logger.info(f"  Min: {meta_train_proba.min():.4f}")
+        logger.info(f"  Max: {meta_train_proba.max():.4f}")
+        logger.info(f"  Mean: {meta_train_proba.mean():.4f}")
+        logger.info(f"  Std: {meta_train_proba.std():.4f}")
+        
+        # Find optimal threshold
+        optimal_threshold, optimal_f1 = find_optimal_threshold(meta_y, meta_train_proba, metric='f1')
+        logger.info(f"Optimal meta-model threshold: {optimal_threshold:.4f} (F1: {optimal_f1:.4f})")
+        
         # Log feature importance (coefficients)
         if hasattr(meta_model, 'coef_') and meta_model.coef_ is not None:
             feature_names = [f'model_{i}' for i in range(len(meta_model.coef_[0]))]
             coef_dict = {name: float(coef) for name, coef in zip(feature_names, meta_model.coef_[0])}
             logger.info(f"Meta-model feature weights: {coef_dict}")
         
-        logger.info("✓ Meta-model training completed")
-        return meta_model
+        logger.info("✓ Meta-model training and threshold optimization completed")
+        return meta_model, optimal_threshold
         
     except Exception as e:
         logger.error(f"Meta-model training failed: {e}")
         raise e
 
-def predict_with_meta_model(meta_model: LogisticRegression, 
+def predict_with_meta_model(meta_model: GradientBoostingClassifier, 
                            test_meta_features: np.ndarray) -> np.ndarray:
     """
     Generate predictions using trained meta-model.
@@ -315,7 +377,7 @@ def predict_with_meta_model(meta_model: LogisticRegression,
 
 def create_ensemble_predictions(trained_models: Dict[str, Any],
                                X_test: pd.DataFrame,
-                               meta_model: Optional[LogisticRegression] = None,
+                               meta_model: Optional[GradientBoostingClassifier] = None,
                                config: Optional[TrainingConfig] = None) -> Dict[str, Any]:
     """
     Create ensemble predictions from trained models.
@@ -444,3 +506,361 @@ def evaluate_stacking_quality(train_meta_features: np.ndarray,
         logger.info(f"Good stacking quality: {metrics['valid_models_train']} diverse models")
     
     return metrics
+
+# ============================================================================
+# Enhanced Stacking Functions with Pipeline Improvements
+# ============================================================================
+
+def enhanced_out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series, 
+                                 X_test: pd.DataFrame,
+                                 config: Optional[TrainingConfig] = None,
+                                 use_time_series_cv: bool = False,
+                                 enable_calibration: bool = True,
+                                 enable_feature_selection: bool = False,
+                                 advanced_sampling: str = 'smoteenn') -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    Enhanced out-of-fold stacking with pipeline improvements.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        X_test: Test features
+        config: Training configuration
+        use_time_series_cv: Use time-series cross-validation
+        enable_calibration: Enable probability calibration
+        enable_feature_selection: Enable SHAP-based feature selection
+        advanced_sampling: Advanced sampling strategy
+        
+    Returns:
+        Tuple of (train_meta_features, test_meta_features, trained_models)
+    """
+    if config is None:
+        config = get_default_config()
+    
+    logger.info("🚀 Enhanced out-of-fold stacking with pipeline improvements...")
+    
+    # Feature selection using SHAP (if enabled)
+    selected_features = X_train.columns.tolist()
+    if enable_feature_selection:
+        try:
+            # Train a quick model for feature selection
+            from models.lightgbm_model import LightGBMModel
+            temp_model = LightGBMModel()
+            temp_model.train(X_train, y_train)
+            
+            # Select top features using SHAP
+            n_features = min(50, len(X_train.columns))  # Select top 50 or all if fewer
+            selected_features = select_top_features_shap(temp_model.model, X_train, k=n_features)
+            
+            # Update feature matrices
+            X_train = X_train[selected_features]
+            X_test = X_test[selected_features]
+            
+            logger.info(f"🎯 Feature selection: {len(selected_features)}/{len(X_train.columns)} features selected")
+            
+        except Exception as e:
+            logger.warning(f"Feature selection failed: {e}, using all features")
+    
+    # Prepare cross-validation strategy
+    try:
+        if use_time_series_cv:
+            skf = create_time_series_splits(n_splits=config.cross_validation.n_folds)
+            logger.info(f"Using time-series cross-validation with {config.cross_validation.n_folds} splits")
+        else:
+            from utils.data_splitting import prepare_cv_data
+            X_cv, y_cv, skf = prepare_cv_data(X_train, y_train, config.cross_validation)
+            
+        n_folds = getattr(skf, 'n_splits', config.cross_validation.n_folds)
+        logger.info(f"Using {n_folds} folds for cross-validation")
+        
+    except Exception as e:
+        logger.error(f"CV preparation failed: {e}")
+        logger.info("Falling back to simple train/test stacking")
+        return simple_train_test_stacking(X_train, y_train, X_test, config)
+    
+    # Check sample sufficiency
+    class_counts = y_train.value_counts()
+    if class_counts.min() < n_folds:
+        logger.warning(f"Insufficient minority samples for {n_folds}-fold CV (min: {class_counts.min()})")
+        logger.info("Falling back to simple train/test stacking")
+        return simple_train_test_stacking(X_train, y_train, X_test, config)
+    
+    # Create model configurations
+    model_configs = create_model_configs(config)
+    
+    # Initialize meta-feature arrays
+    n_models = len(model_configs)
+    train_meta_features = np.zeros((len(X_train), n_models))
+    test_meta_features = np.zeros((len(X_test), n_models))
+    
+    trained_models = {}
+    model_thresholds = {name: [] for name in model_configs.keys()}
+    
+    # Train each model with enhancements
+    for model_idx, (model_name, model_info) in enumerate(model_configs.items()):
+        start_time = time.time()
+        logger.info(f"🎯 Enhanced training for {model_name}...")
+        
+        fold_predictions = []
+        fold_models = []
+        
+        # Optuna hyperparameter tuning
+        optuna_params = {}
+        if hasattr(config, 'enable_optuna') and config.enable_optuna:
+            try:
+                param_space = get_optuna_param_space(model_name)
+                if param_space:
+                    logger.info(f"  🔍 Optuna hyperparameter tuning for {model_name}...")
+                    n_trials = getattr(config, 'optuna_trials', 20)
+                    optuna_params = tune_with_optuna(
+                        model_info['class'], X_train, y_train, param_space, n_trials=n_trials
+                    )
+                    if optuna_params:
+                        logger.info(f"  ✓ Optuna optimization completed: {len(optuna_params)} params")
+            except Exception as e:
+                logger.warning(f"  ⚠️ Optuna tuning failed for {model_name}: {e}")
+        
+        try:
+            # Cross-validation loop with enhancements
+            X_cv = X_train if use_time_series_cv else X_train
+            y_cv = y_train if use_time_series_cv else y_train
+            
+            for fold, (train_idx, val_idx) in enumerate(skf.split(X_cv, y_cv)):
+                logger.info(f"  📊 Fold {fold + 1}/{n_folds}")
+                
+                # Split data for this fold
+                X_fold_train = X_cv.iloc[train_idx]
+                y_fold_train = y_cv.iloc[train_idx]
+                X_fold_val = X_cv.iloc[val_idx]
+                y_fold_val = y_cv.iloc[val_idx]
+                
+                # Advanced sampling
+                sampler = get_advanced_sampler(advanced_sampling)
+                if sampler:
+                    try:
+                        X_fold_balanced, y_fold_balanced = sampler.fit_resample(X_fold_train, y_fold_train)
+                        X_fold_balanced = pd.DataFrame(X_fold_balanced, columns=X_fold_train.columns)
+                        y_fold_balanced = pd.Series(y_fold_balanced)
+                        logger.info(f"    Applied {advanced_sampling} sampling: {len(y_fold_balanced)} samples")
+                    except Exception as e:
+                        logger.warning(f"    Advanced sampling failed: {e}, using original data")
+                        X_fold_balanced, y_fold_balanced = X_fold_train, y_fold_train
+                else:
+                    # Fallback to standard balancing
+                    balance_method = model_info.get('balance_method', 'smote')
+                    X_fold_balanced, y_fold_balanced = prepare_balanced_data(
+                        X_fold_train, y_fold_train, balance_method
+                    )
+                
+                # Create model with Optuna params
+                model_class = model_info['class']
+                if optuna_params:
+                    combined_params = {**model_info.get('params', {}), **optuna_params}
+                    fold_model = model_class(**combined_params)
+                else:
+                    fold_model = model_class()
+                
+                # Train model
+                fold_model.train(X_fold_balanced, y_fold_balanced)
+                
+                # Apply probability calibration if enabled
+                if enable_calibration:
+                    try:
+                        underlying_model = getattr(fold_model, 'model', fold_model)
+                        calibrated_model = calibrate_model(underlying_model, X_fold_balanced, y_fold_balanced)
+                        
+                        # Replace the model with calibrated version
+                        if hasattr(fold_model, 'model'):
+                            fold_model.model = calibrated_model
+                        else:
+                            fold_model = calibrated_model
+                            
+                        logger.info(f"    ✓ Applied probability calibration")
+                    except Exception as e:
+                        logger.warning(f"    Calibration failed: {e}")
+                
+                # Predict on validation set
+                if hasattr(fold_model, 'predict_proba'):
+                    val_proba = fold_model.predict_proba(X_fold_val)
+                    val_proba_1 = val_proba[:, -1] if val_proba.ndim > 1 else val_proba
+                else:
+                    # For calibrated models
+                    val_proba_1 = fold_model.predict_proba(X_fold_val)[:, 1]
+                
+                # Compute optimal threshold
+                try:
+                    from train_models import compute_optimal_threshold
+                    fold_threshold = compute_optimal_threshold(y_fold_val, val_proba_1, metric='pr_auc')
+                    model_thresholds[model_name].append(fold_threshold)
+                except Exception:
+                    model_thresholds[model_name].append(0.5)
+                
+                # Store OOF predictions
+                train_meta_features[val_idx, model_idx] = val_proba_1
+                
+                # Predict on test set
+                if hasattr(fold_model, 'predict_proba'):
+                    test_proba = fold_model.predict_proba(X_test)
+                    test_proba_1 = test_proba[:, -1] if test_proba.ndim > 1 else test_proba
+                else:
+                    test_proba_1 = fold_model.predict_proba(X_test)[:, 1]
+                
+                fold_predictions.append(test_proba_1)
+                fold_models.append(fold_model)
+            
+            # Average test predictions across folds
+            test_meta_features[:, model_idx] = np.mean(fold_predictions, axis=0)
+            
+            # Store model results
+            avg_threshold = np.mean(model_thresholds[model_name]) if model_thresholds[model_name] else 0.5
+            
+            trained_models[model_name] = {
+                'models': fold_models,
+                'config': model_info,
+                'test_predictions': test_meta_features[:, model_idx],
+                'optimal_threshold': avg_threshold,
+                'fold_thresholds': model_thresholds[model_name],
+                'optuna_params': optuna_params,
+                'selected_features': selected_features,
+                'calibration_enabled': enable_calibration,
+                'sampling_method': advanced_sampling
+            }
+            
+            duration = time.time() - start_time
+            logger.info(f"  ✓ Enhanced {model_name} completed in {duration:.1f}s")
+            
+        except Exception as e:
+            logger.error(f"  ✗ Enhanced {model_name} failed: {e}")
+            train_meta_features[:, model_idx] = 0.0
+            test_meta_features[:, model_idx] = 0.0
+            continue
+    
+    logger.info("🎯 Enhanced out-of-fold stacking completed!")
+    return train_meta_features, test_meta_features, trained_models
+
+def get_optuna_param_space(model_name: str) -> Dict[str, Any]:
+    """
+    Get Optuna parameter space for different models.
+    
+    Args:
+        model_name: Name of the model
+        
+    Returns:
+        Dictionary of parameter ranges for Optuna
+    """
+    param_spaces = {
+        'random_forest': {
+            'n_estimators': [50, 100, 200, 300],
+            'max_depth': [3, 5, 8, 12, None],
+            'min_samples_split': (2, 20),
+            'min_samples_leaf': (1, 10),
+            'max_features': ['sqrt', 'log2', None]
+        },
+        'xgboost': {
+            'n_estimators': (50, 300),
+            'max_depth': (3, 12),
+            'learning_rate': (0.01, 0.3),
+            'subsample': (0.6, 1.0),
+            'colsample_bytree': (0.6, 1.0),
+            'reg_alpha': (0.0, 1.0),
+            'reg_lambda': (0.0, 1.0)
+        },
+        'lightgbm': {
+            'num_leaves': (10, 100),
+            'learning_rate': (0.01, 0.3),
+            'feature_fraction': (0.6, 1.0),
+            'bagging_fraction': (0.6, 1.0),
+            'min_child_samples': (5, 100),
+            'reg_alpha': (0.0, 1.0),
+            'reg_lambda': (0.0, 1.0)
+        },
+        'catboost': {
+            'depth': (4, 12),
+            'learning_rate': (0.01, 0.2),
+            'l2_leaf_reg': (1, 10),
+            'iterations': (50, 300),
+            'border_count': [32, 64, 128, 255]
+        }
+    }
+    
+    return param_spaces.get(model_name, {})
+
+def train_enhanced_meta_model(meta_X: np.ndarray, meta_y: np.ndarray,
+                             raw_features: Optional[pd.DataFrame] = None,
+                             config: Optional[TrainingConfig] = None,
+                             use_xgb_meta: bool = False) -> Tuple[Any, float]:
+    """
+    Train enhanced meta-model with raw features and XGBoost option.
+    
+    Args:
+        meta_X: Meta-features from base models
+        meta_y: Target labels
+        raw_features: Raw features to stack with meta-features
+        config: Training configuration
+        use_xgb_meta: Use XGBoost instead of LogisticRegression
+        
+    Returns:
+        Tuple of (trained meta-model, optimal_threshold)
+    """
+    if config is None:
+        config = get_default_config()
+    
+    logger.info("🧠 Training enhanced meta-model...")
+    
+    # Combine meta-features with raw features if provided
+    if raw_features is not None:
+        logger.info(f"Stacking {meta_X.shape[1]} meta-features with {raw_features.shape[1]} raw features")
+        
+        # Ensure index alignment
+        if len(raw_features) != len(meta_X):
+            min_len = min(len(raw_features), len(meta_X))
+            raw_features = raw_features.iloc[:min_len]
+            meta_X = meta_X[:min_len]
+            meta_y = meta_y[:min_len]
+        
+        # Combine features
+        raw_features_reset = raw_features.reset_index(drop=True)
+        meta_features_df = pd.DataFrame(meta_X, columns=[f'meta_{i}' for i in range(meta_X.shape[1])])
+        combined_features = pd.concat([meta_features_df, raw_features_reset], axis=1)
+        
+        logger.info(f"Combined feature matrix shape: {combined_features.shape}")
+        final_X = combined_features.values
+    else:
+        final_X = meta_X
+    
+    try:
+        # Create meta-model
+        if use_xgb_meta:
+            meta_model = create_xgb_meta_model(
+                max_depth=3,
+                n_estimators=50,
+                learning_rate=0.1
+            )
+            logger.info("Using XGBoost meta-model")
+        else:
+            meta_model = GradientBoostingClassifier(
+                n_estimators=100,
+                learning_rate=0.1,
+                max_depth=3,
+                random_state=config.random_state
+            )
+            logger.info("Using GradientBoostingClassifier meta-model")
+        
+        # Train meta-model
+        meta_model.fit(final_X, meta_y)
+        
+        # Get predictions for threshold optimization
+        meta_train_proba = meta_model.predict_proba(final_X)[:, 1]
+        
+        # Find optimal threshold
+        from utils.evaluation import find_optimal_threshold
+        optimal_threshold, optimal_f1 = find_optimal_threshold(meta_y, meta_train_proba, metric='f1')
+        
+        logger.info(f"Enhanced meta-model trained successfully")
+        logger.info(f"Optimal threshold: {optimal_threshold:.4f} (F1: {optimal_f1:.4f})")
+        
+        return meta_model, optimal_threshold
+        
+    except Exception as e:
+        logger.error(f"Enhanced meta-model training failed: {e}")
+        raise e

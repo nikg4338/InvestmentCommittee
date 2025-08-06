@@ -25,11 +25,11 @@ import os
 
 
 try:
-    from catboost import CatBoostClassifier
+    from catboost import CatBoostClassifier as _CatBoostClassifier
     CATBOOST_AVAILABLE = True
 except ImportError:
     CATBOOST_AVAILABLE = False
-    CatBoostClassifier = None
+    _CatBoostClassifier = None
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
@@ -80,6 +80,13 @@ class CatBoostModel(BaseModel):
             self.categorical_features = None
             return
         
+                # Check if CatBoost is available
+        if not CATBOOST_AVAILABLE:
+            self.log("CatBoost not available, model will be disabled", level='warning')
+            self.model = None
+            self.categorical_features = None
+            return
+        
         # Store hyperparameters
         self.params = {
             'iterations': iterations,
@@ -95,8 +102,8 @@ class CatBoostModel(BaseModel):
             **kwargs
         }
         
-        # Initialize model
-        self.model = CatBoostClassifier(**self.params)
+        # Initialize model with aliased import to avoid recursion
+        self.model = _CatBoostClassifier(**self.params)
         
         # Training tracking
         self.validation_metrics = {}
@@ -298,9 +305,14 @@ class CatBoostModel(BaseModel):
             True if successful, False otherwise
         """
         try:
+            # Check if CatBoost is available
+            if not CATBOOST_AVAILABLE:
+                self.log("CatBoost not available, cannot load model", level='error')
+                return False
+                
             # Load the model
             model_path = path if path.endswith('.cbm') else path + '.cbm'
-            self.model = CatBoostClassifier()
+            self.model = _CatBoostClassifier()
             self.model.load_model(model_path)
             self.is_trained = True
             

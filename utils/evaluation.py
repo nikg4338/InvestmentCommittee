@@ -4,7 +4,8 @@ Evaluation Utilities
 ===================
 
 Comprehensive model evaluation, metrics computation, and results export
-for the investment committee training pipeline.
+for the investment committee training pipeline. Now includes ranking-based
+evaluation metrics for improved portfolio construction insights.
 """
 
 import os
@@ -21,7 +22,53 @@ from sklearn.metrics import (
 
 from config.training_config import TrainingConfig, get_default_config
 
+# Import ranking metrics for comprehensive evaluation
+try:
+    from utils.ranking_metrics import compute_ranking_metrics, log_ranking_performance
+    RANKING_METRICS_AVAILABLE = True
+except ImportError:
+    RANKING_METRICS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+if not RANKING_METRICS_AVAILABLE:
+    logger.warning("⚠️  Ranking metrics not available - some evaluation features disabled")
+
+def optimize_ensemble_thresholds(y_true: np.ndarray, 
+                                model_predictions: Dict[str, np.ndarray],
+                                metric: str = 'f1') -> Dict[str, Tuple[float, float]]:
+    """
+    Optimize thresholds for all models in an ensemble.
+    
+    Args:
+        y_true: True binary labels
+        model_predictions: Dictionary mapping model names to probabilities
+        metric: Metric to optimize ('f1', 'precision', 'recall', 'balanced_accuracy')
+        
+    Returns:
+        Dictionary mapping model names to (optimal_threshold, best_metric_value)
+    """
+    threshold_results = {}
+    
+    logger.info(f"🎯 Optimizing thresholds for {len(model_predictions)} models using {metric} metric")
+    
+    for model_name, y_proba in model_predictions.items():
+        try:
+            optimal_threshold, best_score = find_optimal_threshold(y_true, y_proba, metric)
+            threshold_results[model_name] = (optimal_threshold, best_score)
+            
+            # Count predictions at optimal threshold
+            optimal_predictions = (y_proba >= optimal_threshold).astype(int)
+            predicted_positives = optimal_predictions.sum()
+            
+            logger.info(f"  {model_name}: threshold={optimal_threshold:.4f}, "
+                       f"{metric}={best_score:.4f}, predictions={predicted_positives}")
+            
+        except Exception as e:
+            logger.warning(f"  {model_name}: threshold optimization failed - {e}")
+            threshold_results[model_name] = (0.5, 0.0)
+    
+    return threshold_results
 
 def compute_classification_metrics(y_true: np.ndarray, y_pred: np.ndarray,
                                  y_proba: Optional[np.ndarray] = None,
@@ -100,6 +147,45 @@ def compute_classification_metrics(y_true: np.ndarray, y_pred: np.ndarray,
             'predicted_negatives': 0, 'actual_positives': 0, 'actual_negatives': 0,
             'positive_rate': 0.0, 'actual_positive_rate': 0.0
         }
+    
+    return metrics
+
+def compute_enhanced_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray,
+                           model_name: str = "Model") -> Dict[str, float]:
+    """
+    Compute enhanced metrics including ranking-based evaluation for F₁ optimization.
+    
+    Args:
+        y_true: True binary labels
+        y_pred: Predicted binary labels
+        y_proba: Predicted probabilities
+        model_name: Name of the model for logging
+        
+    Returns:
+        Dictionary with comprehensive metrics including ranking metrics
+    """
+    # Start with standard classification metrics
+    metrics = compute_classification_metrics(y_true, y_pred, y_proba, model_name)
+    
+    # Add ranking-based metrics if available
+    if RANKING_METRICS_AVAILABLE and y_proba is not None:
+        try:
+            ranking_metrics = compute_ranking_metrics(y_true, y_proba)
+            metrics.update(ranking_metrics)
+            
+            # Log ranking performance for immediate feedback
+            log_ranking_performance(ranking_metrics, model_name)
+            
+            logger.info(f"✅ Enhanced metrics computed for {model_name}: {len(metrics)} total metrics")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to compute ranking metrics for {model_name}: {e}")
+    
+    else:
+        if not RANKING_METRICS_AVAILABLE:
+            logger.info(f"📊 Standard metrics only for {model_name} (ranking metrics unavailable)")
+        else:
+            logger.warning(f"⚠️  No probabilities available for {model_name} - skipping ranking metrics")
     
     return metrics
 

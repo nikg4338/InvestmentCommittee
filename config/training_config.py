@@ -36,11 +36,16 @@ class CalibrationConfig:
 @dataclass
 class MetaModelConfig:
     """Configuration for meta-model training"""
-    model_type: str = 'logistic_regression'   # Meta-model type
-    max_iter: int = 1000                      # Max iterations for LogisticRegression
-    regularization_c: float = 0.1            # Regularization strength
-    class_weight: str = 'balanced'            # Class weighting strategy
-    solver: str = 'liblinear'                 # Solver for extreme imbalance
+    model_type: str = 'gradient_boosting'     # Meta-model type (updated to gradient boosting)
+    meta_learner_type: str = 'gradientboost'  # Enhanced meta-learner type ('lightgbm', 'gradientboost', 'xgboost')
+    max_iter: int = 1000                       # Max iterations (legacy parameter)
+    regularization_c: float = 0.1             # Regularization strength (legacy parameter)
+    class_weight: str = 'balanced'             # Class weighting strategy (legacy parameter)
+    solver: str = 'liblinear'                  # Solver for extreme imbalance (legacy parameter)
+    # Gradient Boosting specific parameters
+    n_estimators: int = 100                    # Number of boosting stages
+    learning_rate: float = 0.1                # Shrinkage factor
+    max_depth: int = 3                         # Maximum depth of individual trees
     
 @dataclass
 class ThresholdConfig:
@@ -95,6 +100,32 @@ class TrainingConfig:
     # Model selection
     models_to_train: list = None             # List of model names to train (None = all)
     
+    # Advanced features
+    enable_optuna: bool = False              # Enable Optuna hyperparameter tuning
+    optuna_trials: int = 20                  # Number of Optuna trials per model
+    
+    # Pipeline improvements
+    enable_enhanced_stacking: bool = True         # Use enhanced stacking with improvements
+    use_time_series_cv: bool = True               # Use time-series cross-validation for real market data
+    enable_feature_selection: bool = True         # Enable SHAP-based feature selection
+    advanced_sampling: str = 'smoteenn'           # Advanced sampling strategy ('smoteenn', 'adasyn', 'smotetomek')
+    use_xgb_meta_model: bool = True               # Use XGBoost instead of LogisticRegression for meta-model
+    stack_raw_features: bool = False              # Stack raw features with meta-features
+    enable_rolling_backtest: bool = True          # Enable rolling backtest for drift detection
+    enable_drift_detection: bool = True           # Enable data drift detection
+    enable_llm_features: bool = True              # Enable LLM-generated macro signals for real market data
+    
+    # Enhanced meta-model strategies for F₁ optimization
+    meta_model_strategy: str = 'optimal_threshold'  # ('optimal_threshold', 'focal_loss', 'dynamic_weights', 'feature_select')
+    optuna_optimize_for: str = 'average_precision'  # Metric for Optuna optimization ('average_precision', 'f1_weighted', 'roc_auc')
+    
+    # Regression-based approach enhancements for better F₁ scores
+    enable_regression_targets: bool = False          # Use regression targets instead of restrictive binary thresholds
+    regression_threshold_optimization: bool = False  # Enable automatic threshold optimization for regression predictions
+    huber_loss_alpha: float = 0.9                   # Huber loss alpha parameter for outlier robustness
+    evaluate_regression_metrics: bool = False        # Include regression metrics (MSE, MAE, RMSE) in evaluation
+    multi_horizon_targets: bool = False              # Use multiple target horizons (1d, 3d, 5d, 10d) for ensemble diversity
+    
     def __post_init__(self):
         """Initialize sub-configs if not provided"""
         if self.data_balancing is None:
@@ -127,7 +158,7 @@ def get_default_config() -> TrainingConfig:
     )
 
 def get_extreme_imbalance_config() -> TrainingConfig:
-    """Get configuration optimized for extreme class imbalance (99%+ negative)"""
+    """Get configuration optimized for extreme class imbalance (99%+ negative) with regression enhancements"""
     config = get_default_config()
     
     # Adjust for extreme imbalance
@@ -137,6 +168,32 @@ def get_extreme_imbalance_config() -> TrainingConfig:
     config.meta_model.regularization_c = 0.01        # Stronger regularization
     config.threshold.min_positive_rate = 0.005       # Lower minimum (0.5%)
     config.ensemble.top_percentile = 0.005           # More selective voting
+    config.enable_optuna = True                      # Enable hyperparameter tuning
+    config.optuna_trials = 15                        # Moderate number of trials for balance
+    
+    # Include LightGBM regressor in model ensemble for enhanced predictions
+    config.models_to_train = ['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest']
+    
+    # Enable advanced pipeline improvements for extreme imbalance
+    config.enable_enhanced_stacking = True           # Use enhanced stacking
+    config.enable_calibration = True                 # Probability calibration important for imbalance
+    config.advanced_sampling = 'adasyn'              # ADASYN works well for extreme imbalance
+    config.use_xgb_meta_model = True                 # XGBoost meta-model for better non-linear learning
+    config.enable_drift_detection = True             # Monitor for distribution shifts
+    
+    # Enhanced meta-model strategies for extreme imbalance with regression support
+    config.meta_model_strategy = 'optimal_threshold'  # Use optimal threshold with gradient boosting
+    config.optuna_optimize_for = 'average_precision'  # Optimize for PR-AUC (better for imbalance)
+    config.stack_raw_features = True                 # Stack raw features for more signal
+    
+    # Regression-specific enhancements for better F₁ scores
+    config.enable_regression_targets = True          # Use regression targets by default
+    config.regression_threshold_optimization = True  # Enable automatic threshold optimization
+    config.huber_loss_alpha = 0.9                   # Robust regression parameter for outliers
+    
+    # Enhanced evaluation metrics for regression + classification hybrid approach
+    config.evaluate_regression_metrics = True        # Include MSE, MAE, RMSE in evaluation
+    config.multi_horizon_targets = True             # Use 1d, 3d, 5d, 10d targets for ensemble diversity
     
     return config
 

@@ -192,7 +192,7 @@ class AlpacaClient:
 
     def get_market_data(self, symbol: str, timeframe: str = '1Day', limit: int = 100, delayed: bool = True) -> Dict[str, Any]:
         """
-        Get market data for a symbol.
+        Get market data for a symbol using IEX feed (free tier).
         
         Args:
             symbol (str): Symbol to get data for
@@ -215,7 +215,7 @@ class AlpacaClient:
             
             tf = timeframe_map.get(timeframe, TimeFrame.Day)
             
-            # For free tier, use data that's at least 15 minutes old to avoid SIP restrictions
+            # For free tier with IEX, use data that's at least 15 minutes old
             if delayed:
                 end_time = datetime.now() - timedelta(days=2)  # Go back 2 days to avoid recent data restrictions
                 start_time = end_time - timedelta(days=limit + 2)
@@ -223,11 +223,13 @@ class AlpacaClient:
                 end_time = datetime.now()
                 start_time = end_time - timedelta(days=limit)
             
+            # Use IEX feed for free tier instead of SIP
             bars = self.api.get_bars(
                 symbol,
                 tf,
                 start=start_time.strftime('%Y-%m-%d'),
-                end=end_time.strftime('%Y-%m-%d')
+                end=end_time.strftime('%Y-%m-%d'),
+                feed='iex'  # Use IEX feed (free tier) instead of SIP
             )
             
             return {
@@ -251,7 +253,7 @@ class AlpacaClient:
 
     def get_quote(self, symbol: str) -> Dict[str, Any]:
         """
-        Get current quote for a symbol.
+        Get current quote for a symbol using IEX feed (free tier).
         
         Args:
             symbol (str): Symbol to get quote for
@@ -260,7 +262,8 @@ class AlpacaClient:
             Dict[str, Any]: Quote data
         """
         try:
-            quote = self.api.get_latest_quote(symbol)
+            # Use IEX feed for free tier instead of SIP
+            quote = self.api.get_latest_quote(symbol, feed='iex')
             return {
                 'symbol': symbol,
                 'bid_price': float(quote.bid_price),

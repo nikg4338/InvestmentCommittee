@@ -44,10 +44,12 @@ from utils.stacking import (
 )
 from utils.evaluation import (
     evaluate_ensemble_performance, create_performance_summary,
-    export_training_results, create_confusion_matrices, generate_training_report
+    export_training_results, create_confusion_matrices, generate_training_report,
+    optimize_ensemble_thresholds
 )
 from utils.visualization import create_training_report as create_visual_report
 from utils.helpers import compute_classification_metrics
+from utils.probability_analysis import analyze_model_ensemble_probabilities, diagnose_probability_issues
 
 # Import Alpaca data collection
 from data_collection_alpaca import AlpacaDataCollector
@@ -56,7 +58,107 @@ from data_collection_alpaca import AlpacaDataCollector
 from utils.data_splitting import ensure_minority_samples
 from utils.evaluation import find_optimal_threshold
 
+# Import pipeline improvements
+from utils.pipeline_improvements import (
+    rolling_backtest, add_macro_llm_signal, detect_data_drift,
+    compute_dynamic_weights
+)
+
 logger = logging.getLogger(__name__)
+
+def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metric: str = 'pr_auc') -> float:
+    """
+    Compute optimal threshold for given predictions using specified metric.
+    
+    Args:
+        y_true: True binary labels
+        proba_preds: Predicted probabilities
+        metric: Metric to optimize ('pr_auc', 'f1', 'precision', 'recall')
+        
+    Returns:
+        Optimal threshold value
+    """
+    try:
+        from utils.evaluation import find_optimal_threshold
+        threshold, _ = find_optimal_threshold(y_true, proba_preds, metric=metric)
+        return threshold
+    except Exception as e:
+        logger.warning(f"Failed to compute optimal threshold: {e}")
+        return 0.5
+
+def optuna_tune_model(model_cls, X: pd.DataFrame, y: pd.Series, n_trials: int = 20) -> Dict[str, Any]:
+    """
+    Use Optuna to tune hyperparameters for F₁/PR-AUC optimization.
+    
+    Args:
+        model_cls: Model class to tune (RandomForestModel, CatBoostModel, etc.)
+        X: Training features
+        y: Training labels
+        n_trials: Number of Optuna trials
+        
+    Returns:
+        Dictionary of best hyperparameters
+    """
+    try:
+        import optuna
+        from sklearn.model_selection import cross_val_score, StratifiedKFold
+        
+        # Import enhanced optimization function
+        from utils.enhanced_meta_models import optuna_optimize_base_model_for_f1
+        
+        logger.info(f"🎯 Optuna F₁/PR-AUC optimization for {model_cls.__name__}...")
+        
+        # Use enhanced optimization targeting average_precision (PR-AUC)
+        best_params = optuna_optimize_base_model_for_f1(
+            model_cls, X, y, n_trials=n_trials, optimize_metric='average_precision'
+        )
+        
+        if best_params:
+            logger.info(f"✅ Optuna optimization completed for {model_cls.__name__}")
+            return best_params
+        else:
+            logger.warning(f"Optuna optimization failed for {model_cls.__name__}, using defaults")
+            return {}
+        
+    except ImportError:
+        logger.warning("Optuna not available - using default parameters")
+        return {}
+    except Exception as e:
+        logger.warning(f"Optuna tuning failed: {e}")
+        return {}
+
+def compute_dynamic_ensemble_weights(evaluation_results: Dict[str, Any], 
+                                   base_models: List[str] = None) -> Dict[str, float]:
+    """
+    Compute dynamic ensemble weights based on individual model performance.
+    
+    Args:
+        evaluation_results: Results from model evaluation
+        base_models: List of base model names
+        
+    Returns:
+        Dictionary mapping model names to normalized weights
+    """
+    if base_models is None:
+        base_models = ['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest', 'svm']
+    
+    # Extract ROC-AUC scores for weighting
+    roc_scores = {}
+    for model_name in base_models:
+        if model_name in evaluation_results:
+            roc_scores[model_name] = evaluation_results[model_name].get('roc_auc', 0.5)
+        else:
+            roc_scores[model_name] = 0.5  # Default neutral weight
+    
+    # Normalize weights to sum to 1
+    total_score = sum(roc_scores.values()) or 1.0
+    dynamic_weights = {model: score / total_score for model, score in roc_scores.items()}
+    
+    logger.info("🎯 Dynamic ensemble weights based on ROC-AUC:")
+    for model, weight in dynamic_weights.items():
+        logger.info(f"  {model}: {weight:.4f} (ROC-AUC: {roc_scores[model]:.4f})")
+    
+    return dynamic_weights
 
 def setup_logging(log_level: str = 'INFO') -> None:
     """Setup logging configuration"""
@@ -248,12 +350,38 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     logger.info(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
     logger.info(f"Training config: {config.__class__.__name__}")
     
-    # Step 1: Out-of-fold stacking
-    logger.info("\n📊 Phase 1: Out-of-fold stacking...")
+    # Extract meta-learner configuration early to avoid UnboundLocalError
+    meta_learner_type = config.meta_model.meta_learner_type  # Use config value (default: gradientboost)
+    use_xgb_meta = getattr(config, 'use_xgb_meta_model', False)
+    if use_xgb_meta:
+        meta_learner_type = 'lightgbm'  # Override with lightgbm if XGB meta is requested
     
-    train_meta_features, test_meta_features, trained_models = out_of_fold_stacking(
-        X_train, y_train, X_test, config
-    )
+    logger.info(f"📊 Meta-learner type: {meta_learner_type}")
+    
+    # Step 1: Out-of-fold stacking with enhancements
+    logger.info("\n📊 Phase 1: Enhanced out-of-fold stacking...")
+    
+    # Check if enhanced stacking is enabled
+    use_enhanced_stacking = getattr(config, 'enable_enhanced_stacking', True)
+    use_time_series_cv = getattr(config, 'use_time_series_cv', False)
+    enable_calibration = getattr(config, 'enable_calibration', True)
+    enable_feature_selection = getattr(config, 'enable_feature_selection', False)
+    advanced_sampling = getattr(config, 'advanced_sampling', 'smoteenn')
+    
+    if use_enhanced_stacking:
+        from utils.stacking import enhanced_out_of_fold_stacking
+        train_meta_features, test_meta_features, trained_models = enhanced_out_of_fold_stacking(
+            X_train, y_train, X_test, config,
+            use_time_series_cv=use_time_series_cv,
+            enable_calibration=enable_calibration,
+            enable_feature_selection=enable_feature_selection,
+            advanced_sampling=advanced_sampling
+        )
+    else:
+        # Use standard stacking
+        train_meta_features, test_meta_features, trained_models = out_of_fold_stacking(
+            X_train, y_train, X_test, config
+        )
     
     # Check if OOF was successful
     if train_meta_features is None:
@@ -261,17 +389,114 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         use_meta_model = False
         meta_model = None
         meta_test_proba = None
+        optimal_threshold = 0.5
     else:
         use_meta_model = True
         
-        # Step 2: Train meta-model
-        logger.info("\n🧠 Phase 2: Training meta-model...")
+        # Step 2: Train enhanced meta-model with advanced strategies
+        logger.info("\n🧠 Phase 2: Training enhanced meta-model with F₁ optimization...")
         
-        meta_model = train_meta_model(train_meta_features, y_train, config)
+        # Import enhanced meta-model training functions
+        from utils.enhanced_meta_models import (
+            train_meta_model_with_optimal_threshold,
+            train_focal_loss_meta_model,
+            train_dynamic_weighted_ensemble,
+            train_feature_selected_meta_model,
+            get_enhanced_meta_model_strategy
+        )
         
-        # Get meta-model predictions
-        meta_test_proba = meta_model.predict_proba(test_meta_features)[:, -1]
+        # Check configuration for meta-model strategy
+        stack_raw_features = getattr(config, 'stack_raw_features', False)
+        meta_strategy = getattr(config, 'meta_model_strategy', 'optimal_threshold')
+        
+        # Get OOF predictions for dynamic weighting if available
+        oof_predictions = {}
+        test_predictions = {}
+        
+        # Extract base model predictions from ensemble results (we'll get this later)
+        # For now, use the trained models to get predictions
+        for model_name, model_info in trained_models.items():
+            if 'oof_predictions' in model_info:
+                oof_predictions[model_name] = model_info['oof_predictions']
+            if 'test_predictions' in model_info:
+                test_predictions[model_name] = model_info['test_predictions']
+        
+        # Choose enhanced meta-model training strategy
+        if meta_strategy == 'dynamic_weights' and len(oof_predictions) > 0:
+            # Dynamic weighted ensemble approach
+            meta_test_proba, dynamic_weights, optimal_threshold = train_dynamic_weighted_ensemble(
+                oof_predictions, y_train, test_predictions, weight_metric='roc_auc'
+            )
+            meta_model = None  # No actual model, just weighted combination
+            logger.info("✅ Using dynamic weighted ensemble as meta-model")
+            
+        elif meta_strategy == 'focal_loss':
+            # Focal loss meta-model for extreme imbalance
+            meta_model, optimal_threshold = train_focal_loss_meta_model(
+                train_meta_features, y_train, alpha=0.25, gamma=2.0
+            )
+            # Get test predictions
+            if hasattr(meta_model, 'predict'):
+                meta_test_proba = meta_model.predict(test_meta_features)
+            else:
+                meta_test_proba = meta_model.predict_proba(test_meta_features)[:, 1]
+                
+        elif meta_strategy == 'feature_select':
+            # Feature-selected meta-model
+            meta_model, optimal_threshold, train_selected, test_selected = train_feature_selected_meta_model(
+                train_meta_features, y_train, test_meta_features, k_best=3
+            )
+            meta_test_proba = meta_model.predict_proba(test_selected)[:, 1]
+            
+        else:
+            # Default: Optimal threshold with gradient boosting
+            meta_model, optimal_threshold = train_meta_model_with_optimal_threshold(
+                train_meta_features, y_train,
+                meta_learner_type=meta_learner_type,
+                use_class_weights=True,
+                optimize_for='f1'
+            )
+            
+            # Get test predictions
+            if hasattr(meta_model, 'predict'):
+                meta_test_proba = meta_model.predict(test_meta_features)
+            else:
+                meta_test_proba = meta_model.predict_proba(test_meta_features)[:, 1]
+        
+        # Handle raw feature stacking if enabled
+        if stack_raw_features and meta_model is not None:
+            logger.info("🔗 Stacking raw features with meta-features...")
+            # Prepare combined features
+            raw_features_reset = X_train.reset_index(drop=True)
+            meta_features_df = pd.DataFrame(train_meta_features, columns=[f'meta_{i}' for i in range(train_meta_features.shape[1])])
+            combined_train_features = pd.concat([meta_features_df, raw_features_reset], axis=1)
+            
+            raw_test_reset = X_test.reset_index(drop=True)
+            meta_test_df = pd.DataFrame(test_meta_features, columns=[f'meta_{i}' for i in range(test_meta_features.shape[1])])
+            combined_test_features = pd.concat([meta_test_df, raw_test_reset], axis=1)
+            
+            # Retrain meta-model with combined features
+            if meta_strategy == 'feature_select':
+                # Use feature selection on combined features
+                meta_model, optimal_threshold, _, test_selected = train_feature_selected_meta_model(
+                    combined_train_features.values, y_train, combined_test_features.values, k_best=10
+                )
+                meta_test_proba = meta_model.predict_proba(test_selected)[:, 1]
+            else:
+                meta_model, optimal_threshold = train_meta_model_with_optimal_threshold(
+                    combined_train_features.values, y_train,
+                    meta_learner_type=meta_learner_type,
+                    use_class_weights=True,
+                    optimize_for='f1'
+                )
+                
+                if hasattr(meta_model, 'predict'):
+                    meta_test_proba = meta_model.predict(combined_test_features.values)
+                else:
+                    meta_test_proba = meta_model.predict_proba(combined_test_features.values)[:, 1]
+            
         logger.info(f"Meta-model test predictions range: [{meta_test_proba.min():.4f}, {meta_test_proba.max():.4f}]")
+        logger.info(f"Using optimal threshold: {optimal_threshold:.4f} for final predictions")
     
     # Step 3: Create ensemble predictions
     logger.info("\n🎯 Phase 3: Creating ensemble predictions...")
@@ -279,6 +504,37 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     ensemble_results = create_ensemble_predictions(
         trained_models, X_test, meta_model, config
     )
+    
+    # Analyze base model probability distributions
+    logger.info("\n📊 Comprehensive Probability Analysis:")
+    
+    # Perform detailed analysis with diagnostics
+    analysis_results = analyze_model_ensemble_probabilities(
+        ensemble_results['base_predictions'], 
+        y_test, 
+        save_plots=config.visualization.save_plots,
+        plot_dir="reports"
+    )
+    
+    # Check for common probability issues
+    for model_name, probabilities in ensemble_results['base_predictions'].items():
+        issues = diagnose_probability_issues(probabilities, model_name)
+        if issues:
+            logger.warning(f"⚠️ {model_name} probability issues:")
+            for issue in issues:
+                logger.warning(f"  - {issue}")
+    
+    # Analyze meta-model probabilities if available
+    if meta_test_proba is not None:
+        meta_issues = diagnose_probability_issues(meta_test_proba, "Meta-model")
+        if meta_issues:
+            logger.warning(f"⚠️ Meta-model probability issues:")
+            for issue in meta_issues:
+                logger.warning(f"  - {issue}")
+    
+    # Optimize thresholds for all base models
+    logger.info("\n🎯 Individual Model Threshold Optimization:")
+    threshold_results = optimize_ensemble_thresholds(y_test, ensemble_results['base_predictions'], metric='f1')
     
     # Step 4: Rank-and-vote ensemble (production approach)
     if config.ensemble.voting_strategy == 'rank_and_vote':
@@ -295,9 +551,17 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         if meta_test_proba is not None:
             final_probabilities = (final_probabilities + meta_test_proba) / 2
     else:
-        # Use simple ensemble
-        final_predictions = (ensemble_results['simple_ensemble'] >= 0.5).astype(int)
-        final_probabilities = ensemble_results['simple_ensemble']
+        # Use simple ensemble with optimized threshold
+        simple_probabilities = ensemble_results['simple_ensemble']
+        
+        # Find optimal threshold for simple ensemble
+        from utils.evaluation import find_optimal_threshold
+        simple_threshold, simple_f1 = find_optimal_threshold(y_test, simple_probabilities, metric='f1')
+        logger.info(f"Simple ensemble optimal threshold: {simple_threshold:.4f} (F1: {simple_f1:.4f})")
+        
+        final_predictions = (simple_probabilities >= simple_threshold).astype(int)
+        final_probabilities = simple_probabilities
+        optimal_threshold = simple_threshold
     
     # Step 5: Comprehensive evaluation
     logger.info("\n📈 Phase 5: Evaluation...")
@@ -316,11 +580,106 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         final_probabilities
     )
     
+    # Batch-specific signal filter - check if this batch has sufficient signal quality
+    PR_AUC_THRESHOLD = 0.05
+    
+    # Get meta-model PR-AUC for quality check
+    meta_pr_auc = evaluation_results.get('meta_model', {}).get('pr_auc', 0.0)
+    if meta_pr_auc == 0.0:
+        # If no meta-model, use best base model PR-AUC
+        base_pr_aucs = [metrics.get('pr_auc', 0.0) for metrics in evaluation_results.values() 
+                       if isinstance(metrics, dict) and 'pr_auc' in metrics]
+        meta_pr_auc = max(base_pr_aucs) if base_pr_aucs else 0.0
+    
+    if meta_pr_auc < PR_AUC_THRESHOLD:
+        logger.warning(
+            f"⚠️ Batch signal quality check FAILED: PR-AUC ({meta_pr_auc:.3f}) < "
+            f"{PR_AUC_THRESHOLD} → This batch has insufficient predictive signal"
+        )
+        logger.warning("🚫 Recommendation: Skip trading signals for this batch")
+        
+        # Add warning to evaluation results
+        evaluation_results['batch_quality_warning'] = {
+            'pr_auc': meta_pr_auc,
+            'threshold': PR_AUC_THRESHOLD,
+            'recommendation': 'SKIP_BATCH',
+            'reason': 'Insufficient predictive signal quality'
+        }
+    else:
+        logger.info(f"✅ Batch signal quality PASSED: PR-AUC ({meta_pr_auc:.3f}) >= {PR_AUC_THRESHOLD}")
+        evaluation_results['batch_quality_warning'] = None
+    
+    # Compute dynamic ensemble weights based on model performance
+    base_models = ['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest', 'svm']
+    dynamic_weights = compute_dynamic_ensemble_weights(evaluation_results, base_models)
+    
+    # Add weights to evaluation results for export
+    evaluation_results['dynamic_weights'] = dynamic_weights
+    
     # Step 6: Export and visualize results
     logger.info("\n💾 Phase 6: Export and visualization...")
     
     # Export results
     exported_files = export_training_results(evaluation_results, config)
+    
+    # Perform rolling backtest if enabled
+    rolling_results = None
+    enable_rolling_backtest = getattr(config, 'enable_rolling_backtest', False)
+    if enable_rolling_backtest and len(X_train) > 500:  # Only if enough data
+        try:
+            logger.info("\n📈 Performing rolling backtest for drift detection...")
+            
+            # Combine train and test data for rolling analysis
+            X_combined = pd.concat([X_train, X_test], ignore_index=True)
+            y_combined = pd.concat([y_train, y_test], ignore_index=True)
+            
+            # Use best performing base model for rolling backtest
+            best_model_name = max(evaluation_results.keys(), 
+                                key=lambda k: evaluation_results[k].get('roc_auc', 0) 
+                                if isinstance(evaluation_results[k], dict) else 0)
+            
+            if best_model_name in trained_models:
+                best_model = trained_models[best_model_name]['models'][0]  # Use first fold model
+                
+                window_size = min(200, len(X_combined) // 4)
+                step_size = max(50, window_size // 4)
+                
+                rolling_results = rolling_backtest(
+                    best_model, X_combined, y_combined, 
+                    window=window_size, step=step_size
+                )
+                
+                if not rolling_results.empty:
+                    logger.info(f"Rolling backtest completed: {len(rolling_results)} windows")
+                    logger.info(f"Performance stability - Mean F1: {rolling_results['f1'].mean():.4f} ± {rolling_results['f1'].std():.4f}")
+                    
+                    # Save rolling results
+                    rolling_path = f"reports/rolling_backtest_{int(time.time())}.csv"
+                    rolling_results.to_csv(rolling_path, index=False)
+                    exported_files['rolling_backtest'] = rolling_path
+                    
+        except Exception as e:
+            logger.warning(f"Rolling backtest failed: {e}")
+    
+    # Detect data drift if enabled
+    drift_results = None
+    enable_drift_detection = getattr(config, 'enable_drift_detection', False)
+    if enable_drift_detection:
+        try:
+            logger.info("\n🔍 Detecting data drift...")
+            drift_results = detect_data_drift(X_train, X_test, threshold=0.1)
+            
+            if drift_results['drift_detected']:
+                logger.warning(f"⚠️ Data drift detected in {len(drift_results['drifted_features'])} features")
+                logger.warning(f"Recommendation: {drift_results['recommendation']}")
+            else:
+                logger.info("✅ No significant data drift detected")
+            
+            # Add drift results to evaluation
+            evaluation_results['drift_analysis'] = drift_results
+            
+        except Exception as e:
+            logger.warning(f"Drift detection failed: {e}")
     
     # Create visualizations
     training_results = {
@@ -329,7 +688,9 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         'model_names': list(ensemble_results['base_predictions'].keys()) + (['meta_model'] if use_meta_model else []),
         'metrics_df': create_performance_summary(evaluation_results),
         'y_train': y_train,
-        'y_test': y_test
+        'y_test': y_test,
+        'rolling_results': rolling_results,
+        'drift_results': drift_results
     }
     
     if config.visualization.save_plots:
@@ -375,7 +736,7 @@ def main():
     parser.add_argument('--config', choices=['default', 'extreme_imbalance', 'fast_training'],
                        default='default', help='Training configuration preset')
     parser.add_argument('--models', nargs='+', 
-                       choices=['xgboost', 'lightgbm', 'catboost', 'random_forest', 'svm'],
+                       choices=['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest', 'svm'],
                        help='Models to train (default: all)')
     parser.add_argument('--data-file', type=str, help='Path to training data CSV')
     parser.add_argument('--target-column', type=str, default='target', 
@@ -455,6 +816,18 @@ def main():
     # Get feature columns (all except target)
     feature_columns = [col for col in df.columns 
                       if col not in [args.target_column, 'ticker']]
+    
+    # Add LLM macro signal if enabled
+    enable_llm_features = getattr(config, 'enable_llm_features', False)
+    if enable_llm_features:
+        try:
+            logger.info("🤖 Adding LLM macro signal features...")
+            from models.llm_analyzer import LLMAnalyzer
+            llm_analyzer = LLMAnalyzer()
+            df, feature_columns = add_macro_llm_signal(df, llm_analyzer, feature_columns)
+        except Exception as e:
+            logger.warning(f"Failed to add LLM features: {e}")
+    
     logger.info(f"📊 Using {len(feature_columns)} features")
     
     # Prepare training data
