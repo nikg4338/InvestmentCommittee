@@ -126,6 +126,32 @@ def train_meta_model_with_optimal_threshold(meta_X_train: np.ndarray,
             return train_meta_model_with_optimal_threshold(
                 meta_X_train, y_train, 'logistic', use_class_weights, optimize_for
             )
+            
+    elif meta_learner_type == 'logistic':
+        from sklearn.linear_model import LogisticRegression
+        
+        # Prepare LogisticRegression parameters
+        lr_params = {
+            'random_state': 42,
+            'max_iter': 2000,
+            'solver': 'liblinear',  # Better for small datasets
+            'C': 0.1  # Stronger regularization for extreme imbalance
+        }
+        
+        # Add class weighting if enabled
+        if use_class_weights:
+            lr_params['class_weight'] = 'balanced'
+            logger.info("Using class_weight='balanced' for LogisticRegression meta-model")
+        
+        meta_model = LogisticRegression(**lr_params)
+        meta_model.fit(meta_X_train, y_train)
+        
+        # Get training probabilities
+        meta_proba_train = meta_model.predict_proba(meta_X_train)[:, 1]
+        
+    else:
+        raise ValueError(f"Unsupported meta_learner_type: {meta_learner_type}. "
+                        f"Supported types: 'gradientboost', 'lightgbm', 'xgboost', 'logistic'")
     
     # 2. Find optimal threshold using the specified metric
     from utils.evaluation import find_optimal_threshold
@@ -236,6 +262,57 @@ def train_focal_loss_meta_model(meta_X_train: np.ndarray,
         logger.warning(f"Focal loss training failed: {e}, falling back to class-weighted gradient boosting")
         return train_meta_model_with_optimal_threshold(
             meta_X_train, y_train, 'lightgbm', use_class_weights=True, optimize_for='f1'
+        )
+
+def train_smote_enhanced_meta_model(meta_X_train: np.ndarray, 
+                                   y_train: np.ndarray,
+                                   meta_learner_type: str = 'logistic',
+                                   smote_ratio: float = 0.5) -> Tuple[Any, float]:
+    """
+    Train meta-model with SMOTE resampling of meta-training features.
+    
+    Args:
+        meta_X_train: Meta-features from base models
+        y_train: Training labels
+        meta_learner_type: Type of meta-learner
+        smote_ratio: SMOTE sampling ratio (0.5 = 50/50 balance)
+        
+    Returns:
+        Tuple of (trained_meta_model, optimal_threshold)
+    """
+    logger.info(f"🔄 Training SMOTE-enhanced {meta_learner_type} meta-model...")
+    
+    try:
+        from imblearn.over_sampling import SMOTE
+        
+        # Apply SMOTE to meta-training features
+        logger.info(f"Original meta-training distribution: {np.bincount(y_train)}")
+        
+        # Use desired ratio for perfect balance
+        smote = SMOTE(
+            sampling_strategy=smote_ratio,
+            random_state=42,
+            k_neighbors=min(5, np.sum(y_train) - 1)  # Ensure we have enough neighbors
+        )
+        
+        X_meta_resampled, y_meta_resampled = smote.fit_resample(meta_X_train, y_train)
+        
+        logger.info(f"SMOTE resampled distribution: {np.bincount(y_meta_resampled)}")
+        logger.info(f"Meta-training samples: {len(meta_X_train)} → {len(X_meta_resampled)}")
+        
+        # Train meta-model on resampled data
+        return train_meta_model_with_optimal_threshold(
+            X_meta_resampled, y_meta_resampled, 
+            meta_learner_type=meta_learner_type,
+            use_class_weights=True,  # Still use class weights for extra robustness
+            optimize_for='f1'
+        )
+        
+    except Exception as e:
+        logger.warning(f"SMOTE meta-model training failed: {e}")
+        # Fallback to standard meta-model with class weights
+        return train_meta_model_with_optimal_threshold(
+            meta_X_train, y_train, meta_learner_type, True, 'f1'
         )
 
 def train_dynamic_weighted_ensemble(oof_predictions: Dict[str, np.ndarray], 

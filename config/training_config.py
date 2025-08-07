@@ -22,7 +22,7 @@ from typing import Dict, Any, Optional
 class DataBalancingConfig:
     """Configuration for data balancing and sampling"""
     max_ratio: float = 2.5                    # Maximum majority:minority ratio before capping
-    desired_ratio: float = 0.6                # Target ratio for controlled balancing (60% majority, 40% minority)
+    desired_ratio: float = 0.5                # Target ratio for controlled balancing (50% majority, 50% minority) - Updated for perfect balance
     minority_threshold: int = 100             # Threshold below which to use oversampling
     smote_k_neighbors: int = 5                # k_neighbors for SMOTE (will be adapted for small datasets)
     # Enhanced SMOTE parameters for regression models

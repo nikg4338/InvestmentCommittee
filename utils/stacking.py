@@ -19,7 +19,7 @@ from sklearn.model_selection import StratifiedKFold
 from models.xgboost_model import XGBoostModel
 from models.lightgbm_model import LightGBMModel
 from models.lightgbm_regressor import LightGBMRegressor
-from models.lightgbm_quantile_regressor import LightGBMQuantileRegressor
+# from models.lightgbm_quantile_regressor import LightGBMQuantileRegressor  # Commented out to avoid circular import
 from models.catboost_model import CatBoostModel
 from models.random_forest_model import RandomForestModel
 from models.svc_model import SVMClassifier
@@ -163,7 +163,7 @@ MODEL_REGISTRY = {
     
     # Regression models
     'lightgbm_regressor': LightGBMRegressor,
-    'lightgbm_quantile_regressor': LightGBMQuantileRegressor,
+    # 'lightgbm_quantile_regressor': LightGBMQuantileRegressor,  # Commented out to avoid circular import
     'xgboost_regressor': XGBoostRegressorModel,
     'catboost_regressor': CatBoostRegressorModel,
     'random_forest_regressor': RandomForestRegressorModel,

@@ -248,8 +248,32 @@ class AdvancedCommitteeTrainer:
         
         # Train meta-model on out-of-fold predictions
         logger.info("Training meta-model on out-of-fold predictions...")
-        meta_model = LogisticRegression(random_state=42, max_iter=1000)
+        meta_model = LogisticRegression(
+            random_state=42, 
+            max_iter=1000,
+            class_weight='balanced',  # ← FIXED: Added balanced class weights
+            solver='liblinear'  # Better for small datasets with balanced weights
+        )
         meta_model.fit(oof_predictions, y)
+        
+        # ← NEW: Find optimal threshold for meta-model
+        logger.info("Finding optimal threshold for meta-model...")
+        meta_proba_train = meta_model.predict_proba(oof_predictions)[:, 1]
+        
+        # Simple threshold optimization (you can import from utils.evaluation for advanced version)
+        from sklearn.metrics import f1_score
+        thresholds = np.arange(0.01, 1.0, 0.01)
+        best_threshold = 0.5
+        best_f1 = 0.0
+        
+        for threshold in thresholds:
+            y_pred = (meta_proba_train >= threshold).astype(int)
+            f1 = f1_score(y, y_pred, zero_division=0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+        
+        logger.info(f"Optimal meta-model threshold: {best_threshold:.3f} (F1: {best_f1:.3f})")
         
         # Final validation split for evaluation
         from sklearn.model_selection import train_test_split

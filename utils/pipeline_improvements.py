@@ -285,7 +285,12 @@ def create_xgb_meta_model(**kwargs) -> Any:
     except ImportError:
         logger.warning("XGBoost not available for meta-model")
         from sklearn.linear_model import LogisticRegression
-        return LogisticRegression(random_state=42, max_iter=1000)
+        return LogisticRegression(
+            random_state=42, 
+            max_iter=1000,
+            class_weight='balanced',  # ← FIXED: Added balanced class weights
+            solver='liblinear'  # Better for balanced weights
+        )
 
 def rolling_backtest(model, X: pd.DataFrame, y: pd.Series, 
                     window: int = 200, step: int = 50) -> pd.DataFrame:

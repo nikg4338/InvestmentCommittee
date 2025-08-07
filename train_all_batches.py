@@ -6,12 +6,12 @@ Enhanced Automated Batch Training Script for Investment Committee
 This script processes all batches         if disable_enhancements:
             logger.info(f"🔧 Training models for batch {batch_num} (Standard Pipeline)...")
         else:
-            logger.info(f"🚀 Training models for batch {batch_num} (Enhanced Pipeline with 20 improvements)...")
+            logger.info(f"🚀 Training models for batch {batch_num} (Enhanced Pipeline with 21 improvements)...")
             logger.info(f"🎯 F₁ Optimizations: Class weighting, SMOTE, calibration, ranking metrics...")
             logger.info(f"🔮 Phase 3 Quantile: Uncertainty estimation, risk-aware decisions, prediction intervals...")
             logger.info(f"⚡ Enhanced Features: 24-month lookback, regime detection, multi-targets...")iltered_iex_batches.json with enhanced ML pipeline featuring:
 
-🚀 ENHANCED PIPELINE (20 Advanced ML Improvements):
+🚀 ENHANCED PIPELINE (21 Advanced ML Improvements):
 
 **Core Enhancements (9 Original):**
 1. Optuna Hyperparameter Optimization - Automatic parameter tuning (15 trials/model)
@@ -24,7 +24,7 @@ This script processes all batches         if disable_enhancements:
 8. LLM Risk Signal Integration - Macro sentiment and risk analysis
 9. Rolling Backtest & Drift Detection - Performance monitoring and stability
 
-**F₁ Score Optimizations (8 Improvements):**
+**F₁ Score Optimizations (9 Improvements):**
 10. Extended Lookback Window - 24-month historical data collection (730 days)
 11. Regression Target Variables - Multi-horizon return prediction (1d, 3d, 5d, 10d)
 12. Enhanced Class Weighting - Optimized across all models for extreme imbalance
@@ -32,16 +32,17 @@ This script processes all batches         if disable_enhancements:
 14. Isotonic Probability Calibration - Improved confidence estimates for imbalanced data
 15. Multi-Day Binary Targets - Multiple classification horizons for ensemble diversity
 16. Ranking-Based Evaluation - Portfolio-focused metrics (Precision@K, MAP@K, Hit Rate)
-17. Regime-Aware Features - Market regime detection and context-aware indicators
+17. Meta-Model Balanced Training - LogisticRegression class_weight='balanced', optimal thresholds, SMOTE meta-training, auto-strategy selection
+18. Regime-Aware Features - Market regime detection and context-aware indicators
 
 **Phase 3: Quantile Loss Options (3 New Improvements):**
-18. Quantile Regression Models - Multi-quantile prediction with uncertainty estimation
-19. Risk-Aware Decision Making - Conservative/moderate/aggressive trading strategies
-20. Uncertainty-Based Ensemble - Prediction intervals and confidence-aware weighting
+19. Quantile Regression Models - Multi-quantile prediction with uncertainty estimation
+20. Risk-Aware Decision Making - Conservative/moderate/aggressive trading strategies
+21. Uncertainty-Based Ensemble - Prediction intervals and confidence-aware weighting
 
 📊 FEATURES:
 - Extreme imbalance configuration optimized for financial data (99%+ negative class)
-- F₁ score optimization with 8 specialized improvements for class imbalance
+- F₁ score optimization with 9 specialized improvements for class imbalance
 - Phase 3 quantile regression with uncertainty estimation and risk-aware decisions
 - Extended 24-month lookback for better historical context
 - Multi-target regression and classification for enhanced predictions
@@ -72,7 +73,7 @@ This script processes all batches         if disable_enhancements:
 - Risk-aware threshold selection based on investor risk tolerance
 
 Usage:
-    # Enhanced pipeline (default) - All 20 improvements enabled
+    # Enhanced pipeline (default) - All 21 improvements enabled
     python train_all_batches.py                                    # Process all non-empty batches
     python train_all_batches.py --batch 1                          # Process specific batch
     python train_all_batches.py --start 1 --end 5                  # Process batch range
@@ -205,8 +206,9 @@ def train_batch_models(batch_num: int, data_file: str, config: str = "extreme_im
         if disable_enhancements:
             logger.info(f"� Training models for batch {batch_num} (Standard Pipeline)...")
         else:
-            logger.info(f"🚀 Training models for batch {batch_num} (Enhanced Pipeline with 17 improvements)...")
-            logger.info(f"🎯 F₁ Optimizations: Class weighting, SMOTE, calibration, ranking metrics...")
+            logger.info(f"🚀 Training models for batch {batch_num} (Enhanced Pipeline with 21 improvements)...")
+            logger.info(f"🎯 F₁ Optimizations: Class weighting, SMOTE, calibration, ranking metrics, meta-model balanced training...")
+            logger.info(f"🔮 Phase 3 Quantile: Uncertainty estimation, risk-aware decisions, prediction intervals...")
             logger.info(f"⚡ Enhanced Features: 24-month lookback, regime detection, multi-targets...")
         
         # Build command arguments
@@ -229,7 +231,7 @@ def train_batch_models(batch_num: int, data_file: str, config: str = "extreme_im
                 logger.info(f"✓ Standard training completed successfully for batch {batch_num}")
             else:
                 logger.info(f"✓ Enhanced training completed successfully for batch {batch_num}")
-                logger.info(f"✓ Applied 20 ML improvements including F₁ optimizations and Phase 3 quantile regression")
+                logger.info(f"✓ Applied 21 ML improvements including F₁ optimizations, meta-model balanced training, and Phase 3 quantile regression")
             
             # Print enhanced pipeline results for monitoring
             if "Performance Summary:" in result.stdout:
@@ -260,6 +262,18 @@ def train_batch_models(batch_num: int, data_file: str, config: str = "extreme_im
                     weights_start = result.stdout.find("Dynamic ensemble weights")
                     weights_section = result.stdout[weights_start:weights_start+300]
                     logger.info(f"🎯 {weights_section}")
+                
+                # Look for meta-model balanced training results
+                if "SMOTE-enhanced meta-model" in result.stdout or "class_weight='balanced'" in result.stdout:
+                    meta_lines = [line for line in result.stdout.split('\n') 
+                                if 'meta-model' in line.lower() or 'class_weight' in line or 'smote' in line.lower()]
+                    for line in meta_lines[:3]:  # First 3 meta-model results
+                        logger.info(f"🧠 {line}")
+                
+                if "Auto-selected" in result.stdout and "meta-model" in result.stdout:
+                    auto_lines = [line for line in result.stdout.split('\n') if 'Auto-selected' in line]
+                    for line in auto_lines[:2]:
+                        logger.info(f"🎯 {line}")
                 
                 if "Batch signal quality" in result.stdout:
                     quality_start = result.stdout.find("Batch signal quality")
@@ -393,11 +407,11 @@ def create_batch_summary(batch_num: int, batch_dir: Path):
             f.write(f"""# Batch {batch_num} Enhanced Training Summary
 
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**Enhanced Pipeline:** ✅ 20 Advanced ML Improvements Applied
+**Enhanced Pipeline:** ✅ 21 Advanced ML Improvements Applied
 
 ## Overview
 - **Batch Number:** {batch_num}
-- **Training Configuration:** extreme_imbalance (Enhanced with 20 improvements)
+- **Training Configuration:** extreme_imbalance (Enhanced with 21 improvements)
 - **Target Column:** target
 
 ## Original Enhanced Features (1-9)
@@ -521,7 +535,7 @@ def create_master_summary(successful_batches: List[int], failed_batches: List[in
 
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 **Total Processing Time:** {total_time:.1f} seconds ({total_time/60:.1f} minutes)
-**Enhanced Pipeline:** ✅ All 20 Advanced ML Improvements Applied
+**Enhanced Pipeline:** ✅ All 21 Advanced ML Improvements Applied
 
 ## Original Enhanced ML Pipeline Features (1-9)
 🎯 **Optuna Hyperparameter Optimization** - Automatic parameter tuning (15 trials optimal)
@@ -558,7 +572,7 @@ def create_master_summary(successful_batches: List[int], failed_batches: List[in
 {', '.join(map(str, failed_batches)) if failed_batches else 'None - All batches processed successfully! 🎉'}
 
 ## Enhanced Configuration Used
-- **Training Config:** extreme_imbalance (Enhanced with 17 ML improvements)
+- **Training Config:** extreme_imbalance (Enhanced with 21 ML improvements)
 - **Optuna Trials:** 15 per model (balanced speed/quality)
 - **Sampling Strategy:** SMOTE + ADASYN (optimal for extreme imbalance)
 - **Meta-Model:** XGBoost (non-linear meta-learning)
@@ -573,8 +587,9 @@ def create_master_summary(successful_batches: List[int], failed_batches: List[in
 ## Quality Assurance Features
 - **🔍 Signal Quality Check:** Each batch validated for predictive signal strength
 - **⚖️ Dynamic Weighting:** Models weighted by performance (ROC-AUC based)
-- **🎯 F₁ Optimization:** All 8 F₁ improvements applied automatically
-- **📊 Class Imbalance Handling:** Automatic class weighting + SMOTE
+- **🎯 F₁ Optimization:** All 9 F₁ improvements applied automatically
+- **🧠 Meta-Model Balance:** LogisticRegression class_weight='balanced', optimal thresholds, SMOTE meta-training
+- **📊 Class Imbalance Handling:** Automatic class weighting + SMOTE + auto-strategy selection
 - **📈 Ranking Evaluation:** Portfolio selection quality (precision@k)
 - **🔧 Hyperparameter Tuning:** Optuna optimization (15 trials)
 - **🌊 Regime Detection:** Market state features for adaptation
@@ -660,7 +675,7 @@ def main():
     logger.info(f"🏁 Starting Investment Committee {enhancement_type} Batch Training...")
     
     if not args.disable_enhancements:
-        logger.info(f"🚀 Enhanced Pipeline: 20 Advanced ML Improvements Enabled")
+        logger.info(f"🚀 Enhanced Pipeline: 21 Advanced ML Improvements Enabled")
         logger.info(f"✅ Core Features: Optuna, Calibration, ADASYN, Dynamic Weights, XGBoost Meta-Model, Signal Quality, Drift Detection")
         logger.info(f"🔮 Phase 3 Quantile: Uncertainty estimation, risk-aware decisions, prediction intervals")
     
@@ -714,7 +729,7 @@ def main():
     logger.info(f"{'='*70}")
     
     if not args.disable_enhancements:
-        logger.info(f"🚀 Enhanced Pipeline: All 20 ML improvements applied successfully")
+        logger.info(f"🚀 Enhanced Pipeline: All 21 ML improvements applied successfully")
         logger.info(f"🎯 Quality Features: Signal validation, dynamic weights, drift detection")
         logger.info(f"🔮 Phase 3 Quantile: Uncertainty estimation, risk-aware decisions, prediction intervals")
         logger.info(f"⚡ Optimizations: Optuna tuning, probability calibration, ADASYN sampling")

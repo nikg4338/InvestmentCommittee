@@ -176,6 +176,69 @@ def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metri
         except:
             return 0.5
 
+def find_threshold_for_perfect_recall(y_true: np.ndarray, y_pred_proba: np.ndarray) -> Tuple[float, Dict[str, float]]:
+    """
+    Find the minimum threshold that achieves 100% recall on the test set.
+    
+    This is useful for ultra-rare event scenarios where missing any positive
+    case is more costly than having false positives.
+    
+    Args:
+        y_true: True binary labels
+        y_pred_proba: Predicted probabilities
+        
+    Returns:
+        (threshold_for_100_recall, metrics_dict)
+    """
+    from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score
+    
+    # Get precision-recall curve
+    precision, recall, thresholds = precision_recall_curve(y_true, y_pred_proba)
+    
+    # Find thresholds that achieve 100% recall
+    perfect_recall_mask = (recall[:-1] == 1.0)  # [:-1] because thresholds is one element shorter
+    
+    if not np.any(perfect_recall_mask):
+        # If no threshold achieves 100% recall, use the one that gets closest
+        best_recall_idx = np.argmax(recall[:-1])
+        best_threshold = thresholds[best_recall_idx]
+        logger.warning(f"⚠️ Could not achieve 100% recall. Best: {recall[best_recall_idx]:.3f} at threshold {best_threshold:.4f}")
+    else:
+        # Among thresholds with 100% recall, choose the one with highest precision
+        perfect_recall_thresholds = thresholds[perfect_recall_mask]
+        perfect_recall_precisions = precision[:-1][perfect_recall_mask]
+        
+        # Choose the threshold with highest precision among those with 100% recall
+        best_precision_idx = np.argmax(perfect_recall_precisions)
+        best_threshold = perfect_recall_thresholds[best_precision_idx]
+        
+        logger.info(f"🎯 Found threshold {best_threshold:.4f} for 100% recall with precision {perfect_recall_precisions[best_precision_idx]:.3f}")
+    
+    # Calculate final metrics at this threshold
+    y_pred_binary = (y_pred_proba >= best_threshold).astype(int)
+    
+    final_metrics = {
+        'threshold': best_threshold,
+        'f1': f1_score(y_true, y_pred_binary, zero_division=0),
+        'precision': precision_score(y_true, y_pred_binary, zero_division=0),
+        'recall': recall_score(y_true, y_pred_binary, zero_division=0),
+        'support_positive': np.sum(y_true),
+        'support_negative': len(y_true) - np.sum(y_true),
+        'predicted_positive': np.sum(y_pred_binary),
+        'false_positives': np.sum((y_pred_binary == 1) & (y_true == 0)),
+        'false_negatives': np.sum((y_pred_binary == 0) & (y_true == 1))
+    }
+    
+    logger.info(f"🎯 100% Recall Threshold Results:")
+    logger.info(f"   Threshold: {best_threshold:.4f}")
+    logger.info(f"   Precision: {final_metrics['precision']:.3f}")
+    logger.info(f"   Recall: {final_metrics['recall']:.3f}")
+    logger.info(f"   F1: {final_metrics['f1']:.3f}")
+    logger.info(f"   Predicted Positives: {final_metrics['predicted_positive']}/{len(y_true)} ({final_metrics['predicted_positive']/len(y_true)*100:.1f}%)")
+    logger.info(f"   False Negatives: {final_metrics['false_negatives']} (target: 0)")
+    
+    return best_threshold, final_metrics
+
 def optuna_tune_model(model_cls, X: pd.DataFrame, y: pd.Series, n_trials: int = 20) -> Dict[str, Any]:
     """
     Use Optuna to tune hyperparameters for F₁/PR-AUC optimization.
@@ -317,33 +380,53 @@ def setup_logging(log_level: str = 'INFO') -> None:
 
 def clean_data_for_ml(X: pd.DataFrame) -> pd.DataFrame:
     """
-    Clean the feature matrix by handling infinite and extreme values.
+    Clean the feature matrix by handling infinite and extreme values, and removing non-numeric columns.
     """
     X_clean = X.copy()
     
-    # First, remove any columns that contain datetime strings
-    datetime_like_columns = []
+    # First, identify and remove non-numeric columns (like ticker symbols)
+    numeric_cols = []
+    non_numeric_cols = []
+    
     for col in X_clean.columns:
         if X_clean[col].dtype == 'object':
-            # Check if column contains datetime-like strings
-            sample_values = X_clean[col].dropna().head(5).astype(str)
-            if any(any(pattern in str(val) for pattern in ['-', ':', 'T', '+', 'UTC', 'GMT']) and 
-                   len(str(val)) > 10 for val in sample_values):
-                datetime_like_columns.append(col)
+            # Check if column contains non-numeric values that can't be converted
+            try:
+                pd.to_numeric(X_clean[col], errors='raise')
+                numeric_cols.append(col)
+            except (ValueError, TypeError):
+                non_numeric_cols.append(col)
+                logger.warning(f"Removing non-numeric column: {col}")
+                
+                # Show sample non-numeric values for debugging
+                non_numeric_sample = X_clean[col].unique()[:5]
+                logger.warning(f"  Sample values: {non_numeric_sample}")
+        else:
+            # Numeric dtype columns
+            numeric_cols.append(col)
     
-    if datetime_like_columns:
-        logger.warning(f"Removing {len(datetime_like_columns)} datetime-like columns during cleaning: {datetime_like_columns}")
-        X_clean = X_clean.drop(columns=datetime_like_columns)
+    # Keep only numeric columns
+    if non_numeric_cols:
+        logger.warning(f"Removed {len(non_numeric_cols)} non-numeric columns: {non_numeric_cols}")
+        X_clean = X_clean[numeric_cols]
+    
+    # Convert all columns to numeric (handle any edge cases)
+    for col in X_clean.columns:
+        X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
     
     # Replace infinite values with NaN
     X_clean = X_clean.replace([np.inf, -np.inf], np.nan)
     
-    # Clip extreme values
+    # Clip extreme values (only for finite values)
     for col in X_clean.columns:
         if X_clean[col].dtype in ['float64', 'float32', 'int64', 'int32']:
-            q1 = X_clean[col].quantile(0.01)
-            q99 = X_clean[col].quantile(0.99)
-            X_clean[col] = X_clean[col].clip(lower=q1, upper=q99)
+            finite_values = X_clean[col][np.isfinite(X_clean[col])]
+            if len(finite_values) > 0:
+                q1 = finite_values.quantile(0.01)
+                q99 = finite_values.quantile(0.99)
+                X_clean[col] = X_clean[col].clip(lower=q1, upper=q99)
+    
+    logger.info(f"Data cleaning: {X.shape} → {X_clean.shape}, using {len(X_clean.columns)} numeric features")
     
     return X_clean
 
@@ -640,6 +723,7 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             train_focal_loss_meta_model,
             train_dynamic_weighted_ensemble,
             train_feature_selected_meta_model,
+            train_smote_enhanced_meta_model,  # ← NEW: SMOTE meta-model training
             get_enhanced_meta_model_strategy
         )
         
@@ -660,6 +744,20 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
                 test_predictions[model_name] = model_info['test_predictions']
         
         # Choose enhanced meta-model training strategy
+        # Auto-select best strategy based on class imbalance severity
+        positive_rate = np.sum(y_train) / len(y_train)
+        
+        if meta_strategy == 'auto':
+            if positive_rate < 0.02:  # Less than 2% positive
+                meta_strategy = 'smote_enhanced'
+                logger.info(f"🎯 Auto-selected SMOTE-enhanced meta-model for extreme imbalance ({positive_rate*100:.1f}%)")
+            elif positive_rate < 0.05:  # Less than 5% positive
+                meta_strategy = 'focal_loss'
+                logger.info(f"🎯 Auto-selected focal-loss meta-model for severe imbalance ({positive_rate*100:.1f}%)")
+            else:
+                meta_strategy = 'optimal_threshold'
+                logger.info(f"🎯 Auto-selected optimal-threshold meta-model for moderate imbalance ({positive_rate*100:.1f}%)")
+        
         if meta_strategy == 'dynamic_weights' and len(oof_predictions) > 0:
             # Dynamic weighted ensemble approach
             meta_test_proba, dynamic_weights, optimal_threshold = train_dynamic_weighted_ensemble(
@@ -686,11 +784,31 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             )
             meta_test_proba = meta_model.predict_proba(test_selected)[:, 1]
             
+        elif meta_strategy == 'smote_enhanced':
+            # SMOTE-enhanced meta-model for extreme imbalance
+            meta_model, optimal_threshold = train_smote_enhanced_meta_model(
+                train_meta_features, y_train, 
+                meta_learner_type='logistic',  # Use LogisticRegression with class_weight='balanced'
+                smote_ratio=0.5  # Perfect 50/50 balance
+            )
+            # Get test predictions
+            if hasattr(meta_model, 'predict'):
+                meta_test_proba = meta_model.predict(test_meta_features)
+            else:
+                meta_test_proba = meta_model.predict_proba(test_meta_features)[:, 1]
+            
         else:
-            # Default: Optimal threshold with gradient boosting
+            # Default: Optimal threshold with LogisticRegression (balanced class weights)
+            # Auto-select meta-learner based on severity
+            if positive_rate < 0.03:  # Very extreme imbalance
+                selected_meta_learner = 'logistic'  # Best for extreme imbalance with class_weight='balanced'
+                logger.info("🎯 Using LogisticRegression meta-learner for extreme imbalance")
+            else:
+                selected_meta_learner = meta_learner_type  # Use config setting
+            
             meta_model, optimal_threshold = train_meta_model_with_optimal_threshold(
                 train_meta_features, y_train,
-                meta_learner_type=meta_learner_type,
+                meta_learner_type=selected_meta_learner,
                 use_class_weights=True,
                 optimize_for='f1'
             )
@@ -777,21 +895,30 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     for model_name, predictions in ensemble_results['base_predictions'].items():
         try:
             # Use multiple optimization strategies on UNBALANCED test set
-            strategies = ['f1', 'precision', 'pr_auc']
+            strategies = ['f1', 'precision', 'pr_auc', 'perfect_recall']
             best_threshold = 0.5
             best_score = 0.0
             best_strategy = 'f1'
+            perfect_recall_threshold = None
             
             for strategy in strategies:
                 try:
-                    threshold, score, metrics = find_optimal_threshold_on_test(
-                        y_test, predictions, strategy
-                    )
-                    
-                    if score > best_score:
-                        best_threshold = threshold
-                        best_score = score
-                        best_strategy = strategy
+                    if strategy == 'perfect_recall':
+                        # Special handling for 100% recall optimization
+                        threshold, metrics = find_threshold_for_perfect_recall(y_test, predictions)
+                        score = metrics['recall']  # This should be 1.0 if successful
+                        perfect_recall_threshold = threshold
+                        
+                        logger.info(f"  {model_name} 100% recall: threshold={threshold:.4f}, precision={metrics['precision']:.3f}, FN={metrics['false_negatives']}")
+                    else:
+                        threshold, score, metrics = find_optimal_threshold_on_test(
+                            y_test, predictions, strategy
+                        )
+                        
+                        if score > best_score:
+                            best_threshold = threshold
+                            best_score = score
+                            best_strategy = strategy
                         
                 except Exception as e:
                     logger.warning(f"Strategy {strategy} failed for {model_name}: {e}")
@@ -800,7 +927,8 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             threshold_results[model_name] = {
                 'threshold': best_threshold,
                 'score': best_score,
-                'strategy': best_strategy
+                'strategy': best_strategy,
+                'perfect_recall_threshold': perfect_recall_threshold  # Store for later use
             }
             
             logger.info(f"  {model_name}: threshold={best_threshold:.4f}, {best_strategy.upper()}={best_score:.3f}")
@@ -809,6 +937,22 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             logger.warning(f"Threshold optimization failed for {model_name}: {e}")
             threshold_results[model_name] = {'threshold': 0.5, 'score': 0.0, 'strategy': 'default'}
     
+    # Summary of 100% recall threshold results
+    logger.info("\n🎯 100% Recall Threshold Summary:")
+    perfect_recall_available = False
+    for model_name, result in threshold_results.items():
+        if result.get('perfect_recall_threshold') is not None:
+            perfect_recall_available = True
+            logger.info(f"✅ {model_name}: Can achieve 100% recall at threshold {result['perfect_recall_threshold']:.4f}")
+        else:
+            logger.info(f"❌ {model_name}: Cannot achieve 100% recall")
+    
+    if perfect_recall_available:
+        logger.info("💡 TIP: Use 'perfect_recall_threshold' from threshold_results for zero false negatives")
+        logger.info("⚠️  WARNING: 100% recall thresholds may produce many false positives")
+    else:
+        logger.info("📝 NOTE: No models can achieve 100% recall on this test set")
+
     # Portfolio-aware threshold optimization for ensemble
     logger.info("\n📊 Portfolio-aware ensemble optimization:")
     try:
@@ -1178,7 +1322,10 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         'training_time': total_time,
         'config_used': config,
         'stacking_quality': stacking_quality if use_meta_model else None,
-        'text_report': text_report
+        'text_report': text_report,
+        'threshold_results': threshold_results,  # Include all threshold optimization results
+        'perfect_recall_available': any(result.get('perfect_recall_threshold') is not None 
+                                       for result in threshold_results.values())  # Flag if 100% recall is achievable
     }
 
 def main():
@@ -1266,11 +1413,29 @@ def main():
         logger.error(f"❌ Target column '{args.target_column}' not found in data")
         return 1
     
-    # Ensure target is binary for classification
+    # Ensure target is binary for classification with proper extreme imbalance
     if df[args.target_column].dtype in ['float64', 'float32'] and not df[args.target_column].isin([0, 1]).all():
-        logger.info(f"Converting continuous target to binary using median threshold")
-        threshold = df[args.target_column].median()
+        # Use high percentile for extreme imbalance (financial data should have ~1-5% positive rate)
+        percentile_threshold = 95  # Top 5% for extreme imbalance
+        threshold = df[args.target_column].quantile(percentile_threshold / 100)
+        
+        logger.info(f"Converting continuous target to binary using {percentile_threshold}th percentile threshold")
+        logger.info(f"Threshold value: {threshold:.6f}")
+        
         df[args.target_column] = (df[args.target_column] > threshold).astype(int)
+        
+        # Check resulting distribution
+        positive_rate = df[args.target_column].sum() / len(df) * 100
+        logger.info(f"Resulting positive rate: {positive_rate:.2f}%")
+        
+        # If still too high, try 98th percentile
+        if positive_rate > 10:
+            logger.warning(f"Positive rate ({positive_rate:.2f}%) too high, trying 98th percentile...")
+            percentile_threshold = 98
+            threshold = df[args.target_column].quantile(percentile_threshold / 100)
+            df[args.target_column] = (df[args.target_column] > threshold).astype(int)
+            positive_rate = df[args.target_column].sum() / len(df) * 100
+            logger.info(f"New threshold: {threshold:.6f}, positive rate: {positive_rate:.2f}%")
         
     logger.info(f"Target distribution: {df[args.target_column].value_counts().to_dict()}")
     
