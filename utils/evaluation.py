@@ -17,7 +17,7 @@ from datetime import datetime
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, average_precision_score, confusion_matrix,
-    classification_report
+    classification_report, precision_recall_curve
 )
 
 from config.training_config import TrainingConfig, get_default_config
@@ -28,6 +28,31 @@ try:
     RANKING_METRICS_AVAILABLE = True
 except ImportError:
     RANKING_METRICS_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+def compute_threshold_from_oof(y_oof: np.ndarray, p_oof: np.ndarray, metric: str = "f1") -> float:
+    """
+    Select a single threshold using ONLY OOF data.
+    metric: "f1" or "youden" (PR-optimal fallback uses max F1 over grid).
+    """
+    y_oof = np.asarray(y_oof).ravel()
+    p_oof = np.asarray(p_oof).ravel()
+    grid = np.linspace(0.01, 0.99, 99)
+
+    if metric.lower() == "f1":
+        scores = [f1_score(y_oof, (p_oof >= t).astype(int)) for t in grid]
+        return float(grid[int(np.argmax(scores))])
+
+    # Youden-like on PR curve as a tie-breaker
+    prec, rec, thr = precision_recall_curve(y_oof, p_oof)
+    f1 = (2 * prec * rec) / np.clip(prec + rec, 1e-9, None)
+    best = np.argmax(f1)
+    # Map back to a probability threshold; if PR thr shorter than curve, clamp
+    return float(np.clip(thr[best-1] if 0 < best < len(thr) else 0.5, 0.01, 0.99))
+
+def apply_fixed_threshold(p: np.ndarray, t: float) -> np.ndarray:
+    return (np.asarray(p).ravel() >= float(t)).astype(int)
 
 logger = logging.getLogger(__name__)
 

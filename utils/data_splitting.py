@@ -123,47 +123,50 @@ def stratified_train_test_split(X: pd.DataFrame, y: pd.Series,
         # Fall back to random split
         return train_test_split(X, y, test_size=test_size, random_state=random_state)
     
-    # Calculate required samples for stratified split
-    minority_count = counts.min()
-    test_samples_needed = max(1, int(minority_count * test_size))
-    train_samples_needed = minority_count - test_samples_needed
-    
-    # Ensure we have enough samples for both train and test
-    required_total = max(min_minority_samples, test_samples_needed + train_samples_needed + 1)
-    
-    if minority_count < required_total:
-        logger.info(f"Boosting minority samples for stratified split")
-        X_boosted, y_boosted = ensure_minority_samples(X, y, min_samples=required_total)
-    else:
-        X_boosted, y_boosted = X.copy(), y.copy()
-    
-    # Perform stratified split
+    # ---- CRITICAL: DO NOT fabricate data before splitting (prevents leakage) ----
+    # We split each class separately to guarantee both classes in train & test
     try:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_boosted, y_boosted,
-            test_size=test_size,
-            stratify=y_boosted,
-            random_state=random_state
-        )
-        
+        rng = np.random.RandomState(random_state)
+        train_idx, test_idx = [], []
+
+        for cls in sorted(counts.index.tolist()):
+            cls_idx = y[y == cls].index.to_numpy()
+            if len(cls_idx) < 2:
+                # if a class has only 1 sample, force it to train and warn
+                logger.warning(f"Class {cls} has a single sample; assigning it to TRAIN to avoid empty folds")
+                train_idx.extend(cls_idx.tolist())
+                continue
+
+            n_test = max(1, int(round(len(cls_idx) * test_size)))
+            n_test = min(n_test, len(cls_idx) - 1)   # keep at least 1 for train
+            rng.shuffle(cls_idx)
+            test_idx.extend(cls_idx[:n_test].tolist())
+            train_idx.extend(cls_idx[n_test:].tolist())
+
+        # Build splits
+        X_train = X.loc[train_idx].reset_index(drop=True)
+        X_test  = X.loc[test_idx].reset_index(drop=True)
+        y_train = y.loc[train_idx].reset_index(drop=True)
+        y_test  = y.loc[test_idx].reset_index(drop=True)
+
         # Verify both classes are present
         train_counts = y_train.value_counts()
         test_counts = y_test.value_counts()
         
         logger.info(f"Train class distribution: {train_counts.to_dict()}")
         logger.info(f"Test class distribution: {test_counts.to_dict()}")
-        
-        # Check if stratification was successful
+
+        # Check if split was successful
         if len(train_counts) < 2 or len(test_counts) < 2:
-            logger.warning("Stratification failed - missing classes in splits")
-            raise ValueError("Missing classes after stratification")
-        
+            logger.warning("Split failed - missing classes in splits")
+            raise ValueError("Missing classes after split")
+
         return X_train, X_test, y_train, y_test
         
     except Exception as e:
         logger.error(f"Stratified split failed: {e}")
         logger.info("Falling back to custom balanced split")
-        return _fallback_balanced_split(X_boosted, y_boosted, test_size, random_state)
+        return _fallback_balanced_split(X, y, test_size, random_state)
 
 def _fallback_balanced_split(X: pd.DataFrame, y: pd.Series,
                            test_size: float,
@@ -293,7 +296,7 @@ def group_aware_split(X: pd.DataFrame, y: pd.Series,
 def prepare_cv_data(X: pd.DataFrame, y: pd.Series,
                    config: Optional[CrossValidationConfig] = None) -> Tuple[pd.DataFrame, pd.Series, StratifiedKFold]:
     """
-    Prepare data for cross-validation with minority boosting if needed.
+    Prepare data for cross-validation without synthetic augmentation to prevent data leakage.
     
     Args:
         X: Feature matrix
@@ -301,18 +304,17 @@ def prepare_cv_data(X: pd.DataFrame, y: pd.Series,
         config: Cross-validation configuration
         
     Returns:
-        Enhanced X, enhanced y, configured StratifiedKFold
+        Original X, original y, configured StratifiedKFold
     """
     if config is None:
         config = get_default_config().cross_validation
     
     logger.info(f"Preparing CV data with {config.n_folds} folds")
+    logger.info(f"Target distribution: {y.value_counts().to_dict()}")
     
-    # Ensure sufficient minority samples
-    X_cv, y_cv = ensure_minority_samples(
-        X, y, 
-        min_samples=config.min_minority_samples
-    )
+    # Use original data without synthetic augmentation to prevent data leakage
+    # With generous labeling (25% positive), we have sufficient minority samples
+    X_cv, y_cv = X.copy(), y.copy()
     
     # Create robust StratifiedKFold
     skf = robust_stratified_kfold(

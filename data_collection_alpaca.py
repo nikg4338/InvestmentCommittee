@@ -539,13 +539,11 @@ class AlpacaDataCollector:
         forward_returns = forward_returns.dropna()
         
         if target_strategy == 'top_percentile':
-            # Top 5-10% labeling strategy for better positive rate
-            top_percentile = 90  # Top 10% as positive
-            bottom_percentile = 20  # Bottom 20% as negative
+            # Top 25% labeling strategy for more generous positive identification
+            top_percentile = 75  # Top 25% as positive (more generous than 80/90)
             
             if len(forward_returns) > 0:
                 top_threshold = forward_returns.quantile(top_percentile / 100)
-                bottom_threshold = forward_returns.quantile(bottom_percentile / 100)
                 
                 targets = []
                 for i in range(len(df)):
@@ -558,13 +556,14 @@ class AlpacaDataCollector:
                     if pd.isna(future_return):
                         targets.append(0)
                     elif future_return >= top_threshold:
-                        targets.append(1)  # Top performers
+                        targets.append(1)  # Top 25% performers
                     else:
-                        targets.append(0)  # Rest as negative
+                        targets.append(0)  # Bottom 75% as negatives (use all remaining data)
                 
                 positive_rate = sum(targets) / len(targets) if len(targets) > 0 else 0
                 logger.info(f"📊 Top {100-top_percentile}% strategy for {symbol}: {sum(targets)}/{len(targets)} positives ({100*positive_rate:.1f}%)")
-                logger.info(f"   Thresholds: top={top_threshold:.4f}, bottom={bottom_threshold:.4f}")
+                logger.info(f"   Threshold: top={top_threshold:.4f} (25% positive, 75% negative)")
+                logger.info(f"   📈 Using ALL data: no samples discarded, robust negative class with full spectrum")
         
         elif target_strategy == 'multi_class':
             # Multi-class strategy: strong loss / neutral / strong gain
@@ -744,30 +743,29 @@ class AlpacaDataCollector:
             if use_enhanced_targets:
                 target_results = self.create_target_variable(
                     df, symbol, 
-                    use_regression=True,  # Use regression for better patterns
+                    use_regression=False,  # Use classification for generous labeling strategy
                     create_all_horizons=True,  # Create multiple horizons including 7, 14, 21 days
                     target_strategy=target_strategy
                 )
                 
                 if isinstance(target_results, pd.DataFrame):
-                    # Multiple targets created - select primary and enhanced targets
-                    primary_target = 'target_3d_return'  # Primary 3-day return target
-                    enhanced_target = 'target_3d_enhanced'  # Enhanced binary target
+                    # Multiple targets created - use enhanced binary target with generous labeling
+                    enhanced_target = 'target_3d_enhanced'  # Enhanced binary target with 25% positive rate
                     
-                    if primary_target in target_results.columns:
-                        df['target'] = target_results[primary_target]
-                    else:
-                        # Fallback to first return column
-                        return_cols = [col for col in target_results.columns if 'return' in col]
-                        if return_cols:
-                            df['target'] = target_results[return_cols[0]]
-                        else:
-                            logger.warning(f"No return columns found for {symbol}")
-                            return None
-                    
-                    # Add enhanced binary target for ensemble diversity
                     if enhanced_target in target_results.columns:
-                        df['target_enhanced'] = target_results[enhanced_target]
+                        df['target'] = target_results[enhanced_target]  # Use generous labeling as primary target
+                        df['target_enhanced'] = target_results[enhanced_target]  # Backup reference
+                        logger.info(f"✅ Using enhanced target with generous labeling as primary target for {symbol}")
+                    else:
+                        # Fallback to any enhanced target
+                        enhanced_cols = [col for col in target_results.columns if 'enhanced' in col]
+                        if enhanced_cols:
+                            df['target'] = target_results[enhanced_cols[0]]
+                            df['target_enhanced'] = target_results[enhanced_cols[0]]
+                            logger.info(f"✅ Using fallback enhanced target {enhanced_cols[0]} for {symbol}")
+                        else:
+                            logger.warning(f"No enhanced columns found for {symbol}")
+                            return None
                     
                     # Add all horizon targets for multi-horizon ensemble
                     for col in target_results.columns:
@@ -779,8 +777,13 @@ class AlpacaDataCollector:
                     df['target'] = target_results
             
             else:
-                # Use standard target creation
-                df['target'] = self.create_target_variable(df, symbol)
+                # Use generous labeling classification strategy
+                df['target'] = self.create_target_variable(
+                    df, symbol, 
+                    use_regression=False,  # Use classification for generous labeling
+                    create_all_horizons=False,  # Single target
+                    target_strategy='top_percentile'  # 25% positive labeling
+                )
             
             # Add daily return columns for compatibility
             df = self._add_daily_return_columns(df, target_horizon=3)

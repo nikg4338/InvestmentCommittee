@@ -38,7 +38,11 @@ class XGBoostModel:
         }
         self.model = None
         if XGBOOST_AVAILABLE:
-            self.model = xgb.XGBClassifier(**self.model_params)  # Changed to classifier
+            # Ensure valid params for binary:logistic with a safe base_score
+            params = {**self.model_params}
+            params.setdefault("objective", "binary:logistic")
+            params.setdefault("base_score", 0.5)
+            self.model = xgb.XGBClassifier(**params)  # Use classifier for proba
             if model_path:
                 self.load_model(model_path)
         else:
@@ -63,7 +67,7 @@ class XGBoostModel:
             scale_pos_weight = 1.0
         
         # Update model with scale_pos_weight
-        self.model.set_params(scale_pos_weight=scale_pos_weight)
+        self.model.set_params(scale_pos_weight=scale_pos_weight, base_score=0.5)
         
         self.model.fit(X, y)
         self.is_trained = True

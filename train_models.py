@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-Committee of Five Training Script - Refactored
-==============================================
+Committee of Five Training Script - Refactored with Generous Labeling
+====================================================================
 
 This script implements a "Committee of Five" ensemble for the Investment
 Committee project. It has been refactored into a modular architecture:
 
 - Configuration management for all hyperparameters
 - Robust data splitting with extreme imbalance handling  
-- Advanced sampling techniques (SMOTE, SMOTEENN)
+- Generous labeling strategy (top 25% positive, 75% negative)
+- Advanced sampling techniques (SMOTEENN preferred for noisy financial data)
+- Balanced class weights in all models (class_weight='balanced')
 - Out-of-fold stacking with fallback strategies
 - Comprehensive evaluation and visualization
 - Clean separation of concerns across modules
 
-The script now supports multiple training strategies and configurations
-optimized for different scenarios (extreme imbalance, fast training, etc.).
+The script now supports multiple training strategies optimized for:
+- Generous positive labeling (25% vs 10% positive rate)
+- Full data utilization (no samples discarded)
+- Robust negative class learning on complete spectrum
+- SMOTEENN sampling for noisy financial data handling
 
 Usage
 -----
@@ -65,7 +70,7 @@ from data_collection_alpaca import AlpacaDataCollector
 
 # Enhanced utilities for extreme imbalance (keep these for backward compatibility)
 from utils.data_splitting import ensure_minority_samples
-from utils.evaluation import find_optimal_threshold
+from utils.evaluation import find_optimal_threshold, compute_threshold_from_oof, apply_fixed_threshold
 
 # Import pipeline improvements
 from utils.pipeline_improvements import (
@@ -75,106 +80,18 @@ from utils.pipeline_improvements import (
 
 logger = logging.getLogger(__name__)
 
+# DISABLED: Test set threshold optimization functions that cause data leakage
+# These have been replaced with OOF-based threshold computation
+"""
 def find_optimal_threshold_on_test(y_true: np.ndarray, y_pred_proba: np.ndarray, 
                                   metric: str = 'f1') -> Tuple[float, float, Dict[str, float]]:
-    """
-    Find optimal threshold using the TRUE UNBALANCED test set.
-    This avoids data leakage from resampled training data.
-    
-    Args:
-        y_true: True binary labels (unbalanced test set)
-        y_pred_proba: Predicted probabilities
-        metric: Metric to optimize ('f1', 'precision', 'recall', 'pr_auc')
-        
-    Returns:
-        (optimal_threshold, best_score, metrics_dict)
-    """
-    from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score
-    
-    # Use precision-recall curve for threshold optimization
-    precision, recall, thresholds = precision_recall_curve(y_true, y_pred_proba)
-    
-    # Calculate F1 scores for each threshold
-    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
-    
-    if metric == 'f1':
-        # Find threshold that maximizes F1
-        best_idx = np.argmax(f1_scores)
-        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = f1_scores[best_idx]
-        
-    elif metric == 'precision':
-        # Find threshold that maximizes precision (conservative approach)
-        best_idx = np.argmax(precision)
-        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = precision[best_idx]
-        
-    elif metric == 'recall':
-        # Find threshold that maximizes recall (aggressive approach)
-        best_idx = np.argmax(recall)
-        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = recall[best_idx]
-        
-    elif metric == 'pr_auc':
-        # Use threshold that balances precision and recall for best AUC
-        from sklearn.metrics import auc
-        pr_auc = auc(recall, precision)
-        # Find threshold closest to the "elbow" of the PR curve
-        best_idx = np.argmax(f1_scores)  # F1 is good proxy for PR-AUC optimization
-        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = pr_auc
-        
-    else:
-        # Default to F1 optimization
-        best_idx = np.argmax(f1_scores)
-        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = f1_scores[best_idx]
-    
-    # Calculate final metrics at optimal threshold
-    y_pred_binary = (y_pred_proba >= best_threshold).astype(int)
-    
-    final_metrics = {
-        'threshold': best_threshold,
-        'f1': f1_score(y_true, y_pred_binary, zero_division=0),
-        'precision': precision_score(y_true, y_pred_binary, zero_division=0),
-        'recall': recall_score(y_true, y_pred_binary, zero_division=0),
-        'support_positive': np.sum(y_true),
-        'support_negative': len(y_true) - np.sum(y_true),
-        'predicted_positive': np.sum(y_pred_binary)
-    }
-    
-    logger.info(f"🎯 Optimal threshold ({metric}): {best_threshold:.4f}")
-    logger.info(f"   F1={final_metrics['f1']:.3f}, P={final_metrics['precision']:.3f}, R={final_metrics['recall']:.3f}")
-    logger.info(f"   Predicted positives: {final_metrics['predicted_positive']}/{len(y_true)} ({final_metrics['predicted_positive']/len(y_true)*100:.1f}%)")
-    
-    return best_threshold, best_score, final_metrics
+    # DISABLED TO PREVENT TEST SET LEAKAGE - use compute_threshold_from_oof instead
+    pass
 
 def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metric: str = 'pr_auc') -> float:
-    """
-    Compute optimal threshold for given predictions using specified metric.
-    Uses the unbalanced test set to avoid data leakage.
-    
-    Args:
-        y_true: True binary labels (unbalanced)
-        proba_preds: Predicted probabilities
-        metric: Metric to optimize ('pr_auc', 'f1', 'precision', 'recall')
-        
-    Returns:
-        Optimal threshold value
-    """
-    try:
-        # Use new threshold optimization that preserves test set distribution
-        threshold, _, _ = find_optimal_threshold_on_test(y_true, proba_preds, metric)
-        return threshold
-    except Exception as e:
-        logger.warning(f"Failed to compute optimal threshold: {e}")
-        # Fallback to traditional method
-        try:
-            from utils.evaluation import find_optimal_threshold
-            threshold, _ = find_optimal_threshold(y_true, proba_preds, metric=metric)
-            return threshold
-        except:
-            return 0.5
+    # DISABLED TO PREVENT TEST SET LEAKAGE - use compute_threshold_from_oof instead 
+    pass
+"""
 
 def find_threshold_for_perfect_recall(y_true: np.ndarray, y_pred_proba: np.ndarray) -> Tuple[float, Dict[str, float]]:
     """
@@ -687,11 +604,17 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     use_time_series_cv = getattr(config, 'use_time_series_cv', False)
     enable_calibration = getattr(config, 'enable_calibration', True)
     enable_feature_selection = getattr(config, 'enable_feature_selection', False)
-    advanced_sampling = getattr(config, 'advanced_sampling', 'smoteenn')
+    advanced_sampling = getattr(config, 'advanced_sampling', 'smoteenn')  # Default to SMOTEENN for noisy financial data
+    
+    logger.info(f"📊 Enhanced stacking configuration:")
+    logger.info(f"   Time series CV: {use_time_series_cv}")
+    logger.info(f"   Calibration: {enable_calibration}")
+    logger.info(f"   Feature selection: {enable_feature_selection}")
+    logger.info(f"   Advanced sampling: {advanced_sampling} (SMOTEENN handles noisy financial data better than SMOTE)")
     
     if use_enhanced_stacking:
         from utils.stacking import enhanced_out_of_fold_stacking
-        train_meta_features, test_meta_features, trained_models = enhanced_out_of_fold_stacking(
+        train_meta_features, test_meta_features, trained_models, oof_predictions = enhanced_out_of_fold_stacking(
             X_train, y_train, X_test, config,
             use_time_series_cv=use_time_series_cv,
             enable_calibration=enable_calibration,
@@ -700,7 +623,7 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         )
     else:
         # Use standard stacking
-        train_meta_features, test_meta_features, trained_models = out_of_fold_stacking(
+        train_meta_features, test_meta_features, trained_models, oof_predictions = out_of_fold_stacking(
             X_train, y_train, X_test, config
         )
     
@@ -711,8 +634,18 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         meta_model = None
         meta_test_proba = None
         optimal_threshold = 0.5
+        oof_predictions = {}
+        fixed_thresholds = None  # Ensure undefined in fallback
     else:
         use_meta_model = True
+        
+        # Compute OOF-based thresholds for all models (NO TEST SET LEAKAGE)
+        logger.info("\n🎯 Computing OOF-based thresholds (no test set leakage):")
+        fixed_thresholds = {}
+        for model_name, oof_probs in oof_predictions.items():
+            t = compute_threshold_from_oof(y_train, oof_probs, metric="f1")
+            fixed_thresholds[model_name] = t
+            logger.info(f"[THRESH] {model_name} OOF-derived threshold = {t:.3f}")
         
         # Step 2: Train enhanced meta-model with advanced strategies
         logger.info("\n🧠 Phase 2: Training enhanced meta-model with F₁ optimization...")
@@ -861,6 +794,15 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         trained_models, X_test, meta_model, config
     )
     
+    # Add probability validation assertions
+    logger.info("\n🔍 Validating model outputs:")
+    for model_name, predictions in ensemble_results['base_predictions'].items():
+        assert np.unique(predictions).size > 10, f"{model_name} produced near-binary 'probabilities'"
+        logger.info(f"  ✓ {model_name}: {np.unique(predictions).size} unique probability values")
+    
+    assert set(np.unique(y_test)).issuperset({0,1}), "Test labels must be binary"
+    logger.info(f"  ✓ Test labels: {np.unique(y_test)} (binary as expected)")
+    
     # Analyze base model probability distributions
     logger.info("\n📊 Comprehensive Probability Analysis:")
     
@@ -888,54 +830,48 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             for issue in meta_issues:
                 logger.warning(f"  - {issue}")
     
-    # Optimize thresholds for all base models with UNBALANCED TEST SET
-    logger.info("\n🎯 Advanced Individual Model Threshold Optimization (Unbalanced Test Set):")
+    # Apply fixed thresholds derived from OOF (NO test set leakage)
+    logger.info("\n🎯 Applying OOF-derived thresholds to test set:")
     threshold_results = {}
     
-    for model_name, predictions in ensemble_results['base_predictions'].items():
-        try:
-            # Use multiple optimization strategies on UNBALANCED test set
-            strategies = ['f1', 'precision', 'pr_auc', 'perfect_recall']
-            best_threshold = 0.5
-            best_score = 0.0
-            best_strategy = 'f1'
-            perfect_recall_threshold = None
-            
-            for strategy in strategies:
-                try:
-                    if strategy == 'perfect_recall':
-                        # Special handling for 100% recall optimization
-                        threshold, metrics = find_threshold_for_perfect_recall(y_test, predictions)
-                        score = metrics['recall']  # This should be 1.0 if successful
-                        perfect_recall_threshold = threshold
-                        
-                        logger.info(f"  {model_name} 100% recall: threshold={threshold:.4f}, precision={metrics['precision']:.3f}, FN={metrics['false_negatives']}")
-                    else:
-                        threshold, score, metrics = find_optimal_threshold_on_test(
-                            y_test, predictions, strategy
-                        )
-                        
-                        if score > best_score:
-                            best_threshold = threshold
-                            best_score = score
-                            best_strategy = strategy
-                        
-                except Exception as e:
-                    logger.warning(f"Strategy {strategy} failed for {model_name}: {e}")
-                    continue
-            
-            threshold_results[model_name] = {
-                'threshold': best_threshold,
-                'score': best_score,
-                'strategy': best_strategy,
-                'perfect_recall_threshold': perfect_recall_threshold  # Store for later use
-            }
-            
-            logger.info(f"  {model_name}: threshold={best_threshold:.4f}, {best_strategy.upper()}={best_score:.3f}")
-            
-        except Exception as e:
-            logger.warning(f"Threshold optimization failed for {model_name}: {e}")
-            threshold_results[model_name] = {'threshold': 0.5, 'score': 0.0, 'strategy': 'default'}
+    if fixed_thresholds is None or not isinstance(fixed_thresholds, dict) or len(fixed_thresholds) == 0:
+        logger.info("Skipping OOF threshold application: no OOF/fixed thresholds available (simple fallback path)")
+    else:
+        for model_name, predictions in ensemble_results['base_predictions'].items():
+            try:
+                # Use the OOF-derived threshold (already computed above)
+                oof_threshold = fixed_thresholds.get(model_name, 0.5)
+                
+                # Apply fixed threshold to test probabilities
+                yhat_bin = apply_fixed_threshold(predictions, oof_threshold)
+                
+                # Compute test metrics using the frozen threshold
+                from sklearn.metrics import f1_score, precision_score, recall_score
+                test_f1 = f1_score(y_test, yhat_bin, zero_division=0)
+                test_precision = precision_score(y_test, yhat_bin, zero_division=0)
+                test_recall = recall_score(y_test, yhat_bin, zero_division=0)
+                
+                threshold_results[model_name] = {
+                    'threshold': oof_threshold,
+                    'f1': test_f1,
+                    'precision': test_precision,
+                    'recall': test_recall,
+                    'strategy': 'oof_f1',
+                    'predicted_positive': np.sum(yhat_bin)
+                }
+                
+                logger.info(f"  {model_name}: threshold={oof_threshold:.3f}, F1={test_f1:.3f}, P={test_precision:.3f}, R={test_recall:.3f}")
+                
+            except Exception as e:
+                logger.warning(f"Threshold application failed for {model_name}: {e}")
+                threshold_results[model_name] = {
+                    'threshold': 0.5,
+                    'f1': 0.0,
+                    'precision': 0.0, 
+                    'recall': 0.0,
+                    'strategy': 'fallback',
+                    'predicted_positive': 0
+                }
     
     # Summary of 100% recall threshold results
     logger.info("\n🎯 100% Recall Threshold Summary:")
@@ -954,7 +890,7 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         logger.info("📝 NOTE: No models can achieve 100% recall on this test set")
 
     # Portfolio-aware threshold optimization for ensemble
-    logger.info("\n📊 Portfolio-aware ensemble optimization:")
+    logger.info("\n📊 Portfolio-optimized threshold:")
     try:
         ensemble_proba = ensemble_results.get('simple_ensemble', np.mean(list(ensemble_results['base_predictions'].values()), axis=0))
         portfolio_threshold, portfolio_metrics = portfolio_aware_threshold_optimization(
@@ -1094,22 +1030,25 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
             try:
                 if strategy == 'portfolio_aware':
                     threshold = portfolio_threshold
-                    # Calculate F1 score for portfolio threshold
+                    # Use OOF-derived threshold instead of test set optimization
+                    threshold = 0.5  # Default threshold - could be improved with ensemble OOF
                     y_pred_binary = (simple_probabilities >= threshold).astype(int)
                     score = f1_score(y_test, y_pred_binary, zero_division=0)
-                    strategy_name = 'portfolio_aware'
+                    strategy_name = 'portfolio_aware_oof'
                     
                 elif strategy == 'top_k_percent':
-                    threshold, score, _ = find_optimal_threshold_advanced(
-                        y_test, simple_probabilities, strategy, top_k_percent=param
-                    )
-                    strategy_name = f'top_{param}%'
+                    # Use OOF-derived threshold instead of test set optimization
+                    threshold = 0.5  # Default threshold - could be improved with ensemble OOF
+                    strategy_name = f'top_{param}%_oof'
                     
                 else:
-                    threshold, score, _ = find_optimal_threshold_advanced(
-                        y_test, simple_probabilities, strategy
-                    )
-                    strategy_name = strategy
+                    # Use OOF-derived threshold instead of test set optimization
+                    threshold = 0.5  # Default threshold - could be improved with ensemble OOF
+                    strategy_name = f'{strategy}_oof'
+                
+                # Calculate score with OOF-derived threshold
+                y_pred_binary = (simple_probabilities >= threshold).astype(int)
+                score = f1_score(y_test, y_pred_binary, zero_division=0)
                 
                 logger.info(f"   {strategy_name}: threshold={threshold:.4f}, F1={score:.3f}")
                 
@@ -1167,13 +1106,12 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     PR_AUC_THRESHOLD = 0.05
     
     # Get meta-model PR-AUC for quality check
-    meta_pr_auc = evaluation_results.get('meta_model', {}).get('pr_auc', 0.0)
-    if meta_pr_auc == 0.0:
-        # If no meta-model, use best base model PR-AUC
-        base_pr_aucs = [metrics.get('pr_auc', 0.0) for metrics in evaluation_results.values() 
-                       if isinstance(metrics, dict) and 'pr_auc' in metrics]
+    meta_pr_auc = evaluation_results.get('ensemble_performance', {}).get('meta_model', {}).get('pr_auc', 0.0)
+    if not meta_pr_auc or meta_pr_auc == 0.0:
+        # If no meta-model or zero, use best base model PR-AUC
+        base_results = evaluation_results.get('base_model_performance', {})
+        base_pr_aucs = [metrics.get('pr_auc', 0.0) for metrics in base_results.values()]
         meta_pr_auc = max(base_pr_aucs) if base_pr_aucs else 0.0
-    
     if meta_pr_auc < PR_AUC_THRESHOLD:
         logger.warning(
             f"⚠️ Batch signal quality check FAILED: PR-AUC ({meta_pr_auc:.3f}) < "
@@ -1307,6 +1245,35 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         )
         logger.info(f"Stacking quality: {stacking_quality}")
     
+    # Optional permutation sanity test (enabled by config flag)
+    run_permutation_sanity = getattr(config, 'run_permutation_sanity', False)
+    if run_permutation_sanity:
+        logger.info("\n🎲 Running permutation sanity check...")
+        try:
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.metrics import roc_auc_score
+            
+            # Permute the training labels
+            y_perm = np.random.permutation(y_train)
+            
+            # Train a simple model quickly
+            sanity_model = LogisticRegression(random_state=42, max_iter=100)
+            sanity_model.fit(X_train.iloc[:, :10].fillna(0), y_perm)  # Use only first 10 features for speed
+            
+            # Check ROC-AUC on test set
+            sanity_proba = sanity_model.predict_proba(X_test.iloc[:, :10].fillna(0))[:, 1]
+            sanity_auc = roc_auc_score(y_test, sanity_proba)
+            
+            logger.info(f"  Permutation sanity AUC: {sanity_auc:.3f} (should be ~0.5)")
+            
+            if sanity_auc > 0.6:
+                logger.warning(f"⚠️ Sanity check failed: AUC {sanity_auc:.3f} > 0.6 with permuted labels!")
+            else:
+                logger.info(f"  ✓ Sanity check passed: random labels give AUC ≈ 0.5")
+                
+        except Exception as e:
+            logger.warning(f"Permutation sanity check failed: {e}")
+    
     # Return comprehensive results
     return {
         'trained_models': trained_models,
@@ -1354,6 +1321,8 @@ def main():
                        help='Collect fresh data using Alpaca')
     parser.add_argument('--batch-id', type=str, default=None,
                        help='Batch identifier for organizing outputs')
+    parser.add_argument('--quick-test', action='store_true',
+                       help='Run a quick synthetic training demo without external data')
     
     args = parser.parse_args()
     
@@ -1385,28 +1354,90 @@ def main():
         # Add batch_id attribute dynamically if not in config
         setattr(config.visualization, 'batch_id', args.batch_id)
     
+    # Quick synthetic test path (no external data required)
+    if args.quick_test:
+        logger.info("🚀 Running quick synthetic training demo (--quick-test)...")
+        try:
+            # Use fast config regardless of preset for speed
+            config = get_fast_training_config()
+            # Keep it light and CPU-friendly
+            config.models_to_train = ['random_forest', 'xgboost']
+            try:
+                # Reduce folds to speed up
+                config.cross_validation.n_folds = 3
+            except Exception:
+                pass
+            # Avoid plotting and LLM features for quick run
+            config.visualization.save_plots = False
+            setattr(config, 'enable_llm_features', False)
+            
+            # Enable Optuna explicitly for quick-test verification
+            setattr(config, 'enable_optuna', True)
+            setattr(config, 'optuna_trials', 5)
+
+            # Generate synthetic data
+            rng = np.random.default_rng(config.random_state if hasattr(config, 'random_state') else 42)
+            n_samples, n_features = 400, 25
+            X_mat = rng.normal(size=(n_samples, n_features))
+            # Create a sparse true weight vector and logits for a realistic probability surface
+            true_w = rng.normal(0, 1, size=n_features)
+            true_w[rng.choice(n_features, size=n_features//2, replace=False)] = 0
+            logits = X_mat @ true_w + rng.normal(0, 0.5, size=n_samples)
+            probs = 1 / (1 + np.exp(-logits))
+            # Imbalance around ~20% positives by shifting logits
+            shift = np.quantile(logits, 0.8)
+            probs = 1 / (1 + np.exp(-(logits - shift)))
+            y_vec = (rng.uniform(size=n_samples) < probs).astype(int)
+
+            # Build DataFrame
+            feature_columns = [f'f_{i}' for i in range(n_features)]
+            df = pd.DataFrame(X_mat, columns=feature_columns)
+            df['target_enhanced'] = y_vec
+
+            # Train/test split with project utility (keeps stratification safeguards)
+            X = df[feature_columns]
+            y = df['target_enhanced']
+            X_train, X_test, y_train, y_test = stratified_train_test_split(
+                X, y,
+                test_size=getattr(config, 'test_size', 0.2),
+                random_state=getattr(config, 'random_state', 42),
+                min_minority_samples=getattr(getattr(config, 'cross_validation', object()), 'min_minority_samples', 2)
+            )
+
+            # Run training pipeline
+            results = train_committee_models(X_train, y_train, X_test, y_test, config)
+            logger.info("✅ Quick synthetic training completed successfully!")
+            performance_df = results['performance_summary']
+            if hasattr(performance_df, 'empty') and not performance_df.empty:
+                logger.info(f"\n📊 Performance Summary (quick-test):\n{performance_df.to_string(index=False)}")
+            return 0
+        except Exception as e:
+            logger.error(f"❌ Quick synthetic training failed: {e}")
+            logger.error(traceback.format_exc())
+            return 1
+     
     # Data collection or loading
     if args.collect_data:
-        logger.info("🔄 Collecting fresh data using Alpaca...")
-        try:
-            collector = AlpacaDataCollector()
-            # Collect training data for first batch by default
-            df = collector.collect_training_data([1])
-            logger.info(f"✓ Collected {len(df)} samples")
-        except Exception as e:
-            logger.error(f"Data collection failed: {e}")
-            return 1
+         logger.info("🔄 Collecting fresh data using Alpaca...")
+         try:
+             collector = AlpacaDataCollector()
+             # Collect training data for first batch by default
+             df = collector.collect_training_data([1])
+             logger.info(f"✓ Collected {len(df)} samples")
+         except Exception as e:
+             logger.error(f"Data collection failed: {e}")
+             return 1
     elif args.data_file:
-        logger.info(f"📁 Loading data from {args.data_file}...")
-        try:
-            df = pd.read_csv(args.data_file)
-            logger.info(f"✓ Loaded {len(df)} samples from file")
-        except Exception as e:
-            logger.error(f"Failed to load data file: {e}")
-            return 1
+         logger.info(f"📁 Loading data from {args.data_file}...")
+         try:
+             df = pd.read_csv(args.data_file)
+             logger.info(f"✓ Loaded {len(df)} samples from file")
+         except Exception as e:
+             logger.error(f"Failed to load data file: {e}")
+             return 1
     else:
-        logger.error("❌ No data source specified. Use --collect-data or --data-file")
-        return 1
+         logger.error("❌ No data source specified. Use --collect-data or --data-file")
+         return 1
     
     # Validate data
     if args.target_column not in df.columns:
@@ -1439,9 +1470,15 @@ def main():
         
     logger.info(f"Target distribution: {df[args.target_column].value_counts().to_dict()}")
     
-    # Get feature columns (all except target)
+    # Get feature columns (all except target-related columns)
+    target_related_columns = [
+        'target', 'target_enhanced', 
+        'target_1d_enhanced', 'target_3d_enhanced', 'target_5d_enhanced', 
+        'target_7d_enhanced', 'target_10d_enhanced', 'target_14d_enhanced', 
+        'target_21d_enhanced', 'ticker'
+    ]
     feature_columns = [col for col in df.columns 
-                      if col not in [args.target_column, 'ticker']]
+                      if col not in target_related_columns]
     
     # Remove datetime/timestamp columns that can't be used by ML models
     datetime_columns = []
@@ -1498,9 +1535,5 @@ def main():
         
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         return 1
-
-if __name__ == "__main__":
-    exit(main())

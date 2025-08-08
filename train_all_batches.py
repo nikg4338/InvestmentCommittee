@@ -216,7 +216,7 @@ def train_batch_models(batch_num: int, data_file: str, config: str = "extreme_im
             sys.executable, "train_models.py",
             "--data-file", data_file,
             "--config", config,
-            "--target-column", "target", 
+            "--target-column", "target",  # Now uses generous labeling enhanced target as primary
             "--save-plots",
             "--export-results",
             "--log-level", "INFO",

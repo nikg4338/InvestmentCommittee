@@ -1,0 +1,514 @@
+2025-08-07 16:45:45,299 - __main__ - INFO - 📁 Loading data from data/batch_1_data.csv...
+2025-08-07 16:45:45,538 - __main__ - INFO - ✓ Loaded 16133 samples from file
+2025-08-07 16:45:45,539 - __main__ - INFO - Target distribution: {0: 10186, 1: 5947}
+2025-08-07 16:45:45,543 - __main__ - INFO - Removing 1 datetime columns: ['timestamp']
+2025-08-07 16:45:45,543 - __main__ - INFO - 🤖 Adding LLM macro signal features...
+2025-08-07 16:45:46,031 - __main__ - WARNING - Failed to add LLM features: cannot import name 'LLMAnalyzer' from 'models.llm_analyzer' (C:\investment-committee\models\llm_analyzer.py)
+2025-08-07 16:45:46,031 - __main__ - INFO - 📊 Using 111 features
+2025-08-07 16:45:46,031 - __main__ - INFO - Preparing enhanced training data...
+2025-08-07 16:45:46,262 - __main__ - INFO - Data cleaning: (16133, 111) → (16133, 111), using 111 numeric features
+2025-08-07 16:45:46,279 - __main__ - INFO - Data after cleaning: 16133 samples
+2025-08-07 16:45:46,280 - __main__ - INFO - Class distribution: {0: np.int64(10186), 1: np.int64(5947)}
+2025-08-07 16:45:46,280 - __main__ - INFO - Binary positive rate: 36.9%
+2025-08-07 16:45:46,280 - __main__ - INFO - ✅ Good positive rate (36.9%) for model training
+2025-08-07 16:45:46,281 - utils.data_splitting - INFO - Performing stratified train-test split (test_size=0.2)
+2025-08-07 16:45:46,281 - utils.data_splitting - INFO - Original class distribution: {0: 10186, 1: 5947}
+2025-08-07 16:45:46,296 - utils.data_splitting - INFO - Train class distribution: {0: 8149, 1: 4758}
+2025-08-07 16:45:46,296 - utils.data_splitting - INFO - Test class distribution: {0: 2037, 1: 1189}
+2025-08-07 16:45:46,297 - utils.data_splitting - INFO - GOOD SPLIT: Balanced class proportions maintained
+2025-08-07 16:45:46,297 - __main__ - INFO - Split quality: {'train_imbalance_ratio': np.float64(1.7126944094157208), 'test_imbalance_ratio': np.float64(1.7132043734230447), 'max_proportion_difference': np.float64(6.928769986980221e-05), 'mean_proportion_difference': np.float64(6.928769986980221e-05), 'train_size': 12907, 'test_size': 3226, 'train_minority_count': np.int64(4758), 'test_minority_count': np.int64(1189), 'classes_in_train': 2, 'classes_in_test': 2}
+2025-08-07 16:45:46,297 - __main__ - INFO -   Preserving true data distribution - resampling will occur only on training data
+2025-08-07 16:45:46,297 - __main__ - INFO - ✅ Train/test split maintains original positive rates:
+2025-08-07 16:45:46,297 - __main__ - INFO -    Training: 36.86% positive (4758/12907)
+2025-08-07 16:45:46,297 - __main__ - INFO -    Test: 36.86% positive (1189/3226)
+2025-08-07 16:45:46,301 - __main__ - INFO - 🚀 Starting Committee of Five training...
+2025-08-07 16:45:46,301 - __main__ - INFO - Training samples: 12907, Test samples: 3226
+2025-08-07 16:45:46,301 - __main__ - INFO - Training config: TrainingConfig
+2025-08-07 16:45:46,301 - __main__ - INFO - 📊 Meta-learner type: lightgbm
+2025-08-07 16:45:46,301 - __main__ - INFO - 
+📊 Phase 1: Enhanced out-of-fold stacking...
+2025-08-07 16:45:46,301 - __main__ - INFO - 📊 Enhanced stacking configuration:
+2025-08-07 16:45:46,301 - __main__ - INFO -    Time series CV: True
+2025-08-07 16:45:46,301 - __main__ - INFO -    Calibration: True
+2025-08-07 16:45:46,301 - __main__ - INFO -    Feature selection: True
+2025-08-07 16:45:46,301 - __main__ - INFO -    Advanced sampling: adasyn (SMOTEENN handles noisy financial data better than SMOTE)
+2025-08-07 16:45:46,301 - utils.stacking - INFO - 🚀 Enhanced out-of-fold stacking with pipeline improvements...
+2025-08-07 16:45:46,302 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 11 parameters
+2025-08-07 16:45:46,302 - models.base_model - INFO - [LightGBMModel] Starting LightGBM training...
+2025-08-07 16:45:48,202 - models.base_model - INFO - [LightGBMModel] LightGBM training completed successfully
+2025-08-07 16:45:48,663 - utils.pipeline_improvements - INFO - Selected top 50 features using SHAP:
+2025-08-07 16:45:48,663 - utils.pipeline_improvements - INFO -   1. pnl_ratio: 2.7441
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   2. volume_sma_50: 0.8297
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   3. daily_return: 0.1963
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   4. beta_proxy: 0.1957
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   5. sma_200: 0.1412
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   6. volatility_50d: 0.1332
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   7. vol_kurtosis: 0.1290
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   8. spread_width_proxy: 0.1091
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   9. relative_strength: 0.1063
+2025-08-07 16:45:48,664 - utils.pipeline_improvements - INFO -   10. atr_20d: 0.0997
+2025-08-07 16:45:48,669 - utils.stacking - INFO - 🎯 Feature selection: 50/50 features selected
+2025-08-07 16:45:48,669 - utils.stacking - INFO - Using time-series cross-validation with 3 splits
+2025-08-07 16:45:48,669 - utils.stacking - INFO - Using 3 folds for cross-validation
+2025-08-07 16:45:48,670 - utils.stacking - WARNING - Unknown model: lightgbm_quantile_regressor
+2025-08-07 16:45:48,671 - utils.stacking - INFO - 🎯 Enhanced training for xgboost...
+2025-08-07 16:45:48,671 - utils.stacking - INFO -   🔍 Optuna hyperparameter tuning for xgboost...
+2025-08-07 16:45:48,809 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,810 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,811 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,811 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,812 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,812 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,813 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,814 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,814 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,815 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,834 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,852 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,870 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,888 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,907 - utils.pipeline_improvements - WARNING - Optuna trial failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,907 - utils.pipeline_improvements - INFO - Optuna optimization completed: best score = 0.0000
+2025-08-07 16:45:48,907 - utils.stacking - INFO -   ✓ Optuna optimization completed: 7 params
+2025-08-07 16:45:48,908 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:45:48,911 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:45:48,911 - utils.stacking - ERROR -   ✗ Enhanced xgboost failed: XGBoostModel.__init__() got an unexpected keyword argument 'n_estimators'
+2025-08-07 16:45:48,912 - utils.stacking - INFO - 🎯 Enhanced training for lightgbm...
+2025-08-07 16:45:48,912 - utils.stacking - INFO -   🔍 Optuna hyperparameter tuning for lightgbm...
+2025-08-07 16:45:48,913 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:49,651 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:50,181 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:50,757 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:51,259 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:52,030 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:52,874 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:53,263 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:53,889 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:54,331 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:54,934 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:55,835 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:56,767 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:57,737 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:58,540 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:59,277 - utils.pipeline_improvements - INFO - Optuna optimization completed: best score = 0.9831
+2025-08-07 16:45:59,277 - utils.stacking - INFO -   ✓ Optuna optimization completed: 7 params
+2025-08-07 16:45:59,278 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:45:59,284 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:45:59,285 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:59,285 - models.base_model - INFO - [LightGBMModel] Starting LightGBM training...
+2025-08-07 16:45:59,307 - models.base_model - INFO - [LightGBMModel] LightGBM training completed successfully
+2025-08-07 16:45:59,356 - utils.pipeline_improvements - INFO - Model calibrated using isotonic method with 3-fold CV
+2025-08-07 16:45:59,356 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:45:59,370 - utils.stacking - INFO -   📊 Fold 2/3
+2025-08-07 16:45:59,375 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:45:59,375 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:59,375 - models.base_model - INFO - [LightGBMModel] Starting LightGBM training...
+2025-08-07 16:45:59,402 - models.base_model - INFO - [LightGBMModel] LightGBM training completed successfully
+2025-08-07 16:45:59,484 - utils.pipeline_improvements - INFO - Model calibrated using isotonic method with 3-fold CV
+2025-08-07 16:45:59,484 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:45:59,513 - utils.stacking - INFO -   📊 Fold 3/3
+2025-08-07 16:45:59,563 - utils.stacking - INFO -     Applied adasyn sampling: 16482 samples
+2025-08-07 16:45:59,563 - models.base_model - INFO - [LightGBMModel] Initialized LightGBM with 14 parameters
+2025-08-07 16:45:59,563 - models.base_model - INFO - [LightGBMModel] Starting LightGBM training...
+2025-08-07 16:45:59,979 - models.base_model - INFO - [LightGBMModel] LightGBM training completed successfully
+2025-08-07 16:46:00,967 - utils.pipeline_improvements - INFO - Model calibrated using isotonic method with 3-fold CV
+2025-08-07 16:46:00,967 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:46:01,016 - utils.stacking - INFO -   ✓ Enhanced lightgbm completed in 12.1s
+2025-08-07 16:46:01,017 - utils.stacking - INFO - 🎯 Enhanced training for catboost...
+2025-08-07 16:46:01,017 - utils.stacking - INFO -   🔍 Optuna hyperparameter tuning for catboost...
+2025-08-07 16:46:01,019 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:07,371 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:14,119 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:16,189 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:22,518 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:26,299 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:30,622 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:35,656 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:37,672 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:42,000 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:46:45,277 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:47:08,876 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:47:19,415 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:47:54,641 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:48:53,161 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:49:35,330 - utils.pipeline_improvements - INFO - Optuna optimization completed: best score = 0.9761
+2025-08-07 16:49:35,331 - utils.stacking - INFO -   ✓ Optuna optimization completed: 5 params
+2025-08-07 16:49:35,331 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:49:35,335 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:49:35,337 - models.base_model - INFO - [CatBoostModel] Initialized CatBoost with 11 parameters
+2025-08-07 16:49:35,338 - models.base_model - INFO - [CatBoostModel] Starting CatBoost training...
+2025-08-07 16:49:35,354 - models.base_model - INFO - [CatBoostModel] Error during CatBoost training: catboost/private/libs/target/target_converter.cpp:404: Target contains only one unique value
+2025-08-07 16:49:35,354 - utils.stacking - ERROR -   ✗ Enhanced catboost failed: catboost/private/libs/target/target_converter.cpp:404: Target contains only one unique value
+2025-08-07 16:49:35,354 - utils.stacking - INFO - 🎯 Enhanced training for random_forest...
+2025-08-07 16:49:35,354 - utils.stacking - INFO -   🔍 Optuna hyperparameter tuning for random_forest...
+2025-08-07 16:49:35,355 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:49:37,023 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 300 trees
+2025-08-07 16:49:40,768 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 200 trees
+2025-08-07 16:49:52,144 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:49:58,967 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 300 trees
+2025-08-07 16:50:16,435 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 300 trees
+2025-08-07 16:50:20,384 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 200 trees
+2025-08-07 16:50:21,966 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 300 trees
+2025-08-07 16:50:25,187 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 50 trees
+2025-08-07 16:50:28,624 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:50:35,848 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:50:43,072 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:50:50,278 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:50:57,464 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:51:04,766 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 50 trees
+2025-08-07 16:51:07,022 - utils.pipeline_improvements - INFO - Optuna optimization completed: best score = 0.9603
+2025-08-07 16:51:07,023 - utils.stacking - INFO -   ✓ Optuna optimization completed: 5 params
+2025-08-07 16:51:07,023 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:07,031 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:07,032 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:51:07,032 - models.base_model - INFO - [RandomForestModel] Starting Random Forest training...
+2025-08-07 16:51:07,185 - models.base_model - INFO - [RandomForestModel] Random Forest training completed successfully
+2025-08-07 16:51:07,350 - utils.pipeline_improvements - WARNING - Calibration failed: Got predict_proba of shape (1077, 1), but need classifier with two classes., returning original estimator
+2025-08-07 16:51:07,350 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:07,424 - utils.stacking - INFO -   📊 Fold 2/3
+2025-08-07 16:51:07,428 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:07,428 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:51:07,428 - models.base_model - INFO - [RandomForestModel] Starting Random Forest training...
+2025-08-07 16:51:07,568 - models.base_model - INFO - [RandomForestModel] Random Forest training completed successfully
+2025-08-07 16:51:07,742 - utils.pipeline_improvements - WARNING - Calibration failed: Got predict_proba of shape (2152, 1), but need classifier with two classes., returning original estimator
+2025-08-07 16:51:07,742 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:07,817 - utils.stacking - INFO -   📊 Fold 3/3
+2025-08-07 16:51:07,880 - utils.stacking - INFO -     Applied adasyn sampling: 16482 samples
+2025-08-07 16:51:07,880 - models.base_model - INFO - [RandomForestModel] Initialized Random Forest with 100 trees
+2025-08-07 16:51:07,880 - models.base_model - INFO - [RandomForestModel] Starting Random Forest training...
+2025-08-07 16:51:16,002 - models.base_model - INFO - [RandomForestModel] Random Forest training completed successfully
+2025-08-07 16:51:32,305 - utils.pipeline_improvements - INFO - Model calibrated using isotonic method with 3-fold CV
+2025-08-07 16:51:32,305 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:32,561 - utils.stacking - INFO -   ✓ Enhanced random_forest completed in 117.2s
+2025-08-07 16:51:32,561 - utils.stacking - INFO - 🎯 Enhanced training for lightgbm_regressor...
+2025-08-07 16:51:32,563 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:32,566 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:32,566 - models.base_model - INFO - [LightGBMRegressor] Initialized LightGBM Regressor with Huber loss (alpha=0.9)
+2025-08-07 16:51:32,567 - models.base_model - INFO - [LightGBMRegressor] Training on 3229 samples (removed 0 NaN samples)
+2025-08-07 16:51:32,567 - utils.sampling - INFO - 🔄 Applying SMOTE for positive example upsampling...
+2025-08-07 16:51:32,567 - utils.sampling - WARNING - Only one class found for SMOTE (threshold=0.0). Returning original data.
+2025-08-07 16:51:32,568 - utils.sampling - INFO - ⚖️ Sample weighting: 0/3229 positive samples with 10.0x weight
+2025-08-07 16:51:32,568 - models.base_model - INFO - [LightGBMRegressor] Enhanced training data: 3229 → 3229 samples
+2025-08-07 16:51:32,568 - models.base_model - INFO - [LightGBMRegressor] Sample weighting: 0/3229 positive samples with weight 10.0x
+2025-08-07 16:51:32,736 - models.base_model - INFO - [LightGBMRegressor] Threshold optimization: Best F1=0.000 at threshold=0.0000
+2025-08-07 16:51:32,736 - models.base_model - INFO - [LightGBMRegressor] Optimal threshold (from training): 0.0000
+2025-08-07 16:51:32,736 - models.base_model - INFO - [LightGBMRegressor] Training completed. Model trained successfully.
+2025-08-07 16:51:32,737 - utils.pipeline_improvements - WARNING - Calibration failed: The 'estimator' parameter of CalibratedClassifierCV must be an object implementing 'fit' and 'predict_proba', an object implementing 'fit' and 'decision_function' or None. Got <lightgbm.basic.Booster object at 0x000001EDCBC22510> instead., returning original estimator
+2025-08-07 16:51:32,737 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:32,738 - utils.stacking - ERROR -   ✗ Enhanced lightgbm_regressor failed: 'LightGBMRegressor' object has no attribute 'predict_proba'
+2025-08-07 16:51:32,738 - utils.stacking - INFO - 🎯 Enhanced training for xgboost_regressor...
+2025-08-07 16:51:32,738 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:32,745 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:32,746 - models.base_model - INFO - [XGBoostRegressor] Initialized XGBoost Regressor with Huber loss (slope=1.0)
+2025-08-07 16:51:32,747 - models.base_model - INFO - [XGBoostRegressor] Training on 3229 samples (removed 0 NaN samples)
+2025-08-07 16:51:32,748 - utils.sampling - INFO - 🔄 Applying SMOTE for positive example upsampling...
+2025-08-07 16:51:32,748 - utils.sampling - WARNING - Only one class found for SMOTE (threshold=0.0). Returning original data.
+2025-08-07 16:51:32,749 - utils.sampling - INFO - ⚖️ Sample weighting: 0/3229 positive samples with 10.0x weight
+2025-08-07 16:51:32,750 - models.base_model - INFO - [XGBoostRegressor] Enhanced training data: 3229 → 3229 samples
+2025-08-07 16:51:32,750 - models.base_model - INFO - [XGBoostRegressor] Sample weighting: 0/3229 positive samples with weight 10.0x
+2025-08-07 16:51:32,938 - models.base_model - INFO - [XGBoostRegressor] Threshold optimization: Best F1=0.000 at threshold=0.0000
+2025-08-07 16:51:32,939 - models.base_model - INFO - [XGBoostRegressor] Optimal threshold (from training): 0.0000
+2025-08-07 16:51:32,940 - models.base_model - INFO - [XGBoostRegressor] Training completed. Best iteration: N/A
+2025-08-07 16:51:32,944 - utils.pipeline_improvements - WARNING - Calibration failed: The 'estimator' parameter of CalibratedClassifierCV must be an object implementing 'fit' and 'predict_proba', an object implementing 'fit' and 'decision_function' or None. Got XGBRegressor(base_score=None, booster=None, callbacks=None,
+             colsample_bylevel=None, colsample_bynode=None,
+             colsample_bytree=1.0, device=None, early_stopping_rounds=None,
+             enable_categorical=False, eval_metric=None, feature_types=None,
+             feature_weights=None, gamma=None, grow_policy=None,
+             huber_slope=1.0, importance_type=None,
+             interaction_constraints=None, learning_rate=0.3, max_bin=None,
+             max_cat_threshold=None, max_cat_to_onehot=None,
+             max_delta_step=None, max_depth=6, max_leaves=None,
+             min_child_weight=None, missing=nan, monotone_constraints=None,
+             multi_strategy=None, n_estimators=100, n_jobs=None, ...) instead., returning original estimator
+2025-08-07 16:51:32,944 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:32,944 - utils.stacking - ERROR -   ✗ Enhanced xgboost_regressor failed: 'XGBoostRegressorModel' object has no attribute 'predict_proba'
+2025-08-07 16:51:32,945 - utils.stacking - INFO - 🎯 Enhanced training for catboost_regressor...
+2025-08-07 16:51:32,945 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:32,952 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:32,953 - models.base_model - INFO - [CatBoostRegressor] Initialized CatBoost Regressor with Huber loss (delta=1.0)
+2025-08-07 16:51:32,954 - models.base_model - INFO - [CatBoostRegressor] Training on 3229 samples (removed 0 NaN samples)
+2025-08-07 16:51:32,975 - models.base_model - INFO - [CatBoostRegressor] ❌ Training failed: catboost/libs/metrics/metric.cpp:6935: All train targets are equal
+2025-08-07 16:51:32,975 - utils.stacking - ERROR -   ✗ Enhanced catboost_regressor failed: catboost/libs/metrics/metric.cpp:6935: All train targets are equal
+2025-08-07 16:51:32,976 - utils.stacking - INFO - 🎯 Enhanced training for random_forest_regressor...
+2025-08-07 16:51:32,976 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:32,983 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:32,984 - models.base_model - INFO - [RandomForestRegressor] Initialized Random Forest Regressor with 100 trees
+2025-08-07 16:51:32,985 - models.base_model - INFO - [RandomForestRegressor] Training on 3229 samples (removed 0 NaN samples)
+2025-08-07 16:51:33,199 - models.base_model - INFO - [RandomForestRegressor] Threshold optimization: Best F1=0.000 at threshold=0.0000
+2025-08-07 16:51:33,199 - models.base_model - INFO - [RandomForestRegressor] Optimal threshold (from training): 0.0000
+2025-08-07 16:51:33,200 - models.base_model - INFO - [RandomForestRegressor] Training completed. OOB Score: 1.0
+2025-08-07 16:51:33,200 - utils.pipeline_improvements - WARNING - Calibration failed: The 'estimator' parameter of CalibratedClassifierCV must be an object implementing 'fit' and 'predict_proba', an object implementing 'fit' and 'decision_function' or None. Got RandomForestRegressor(max_features='sqrt', n_jobs=-1, oob_score=True,
+                      random_state=42) instead., returning original estimator
+2025-08-07 16:51:33,200 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:33,200 - utils.stacking - ERROR -   ✗ Enhanced random_forest_regressor failed: 'RandomForestRegressorModel' object has no attribute 'predict_proba'
+2025-08-07 16:51:33,201 - utils.stacking - INFO - 🎯 Enhanced training for svm_regressor...
+2025-08-07 16:51:33,201 - utils.stacking - INFO -   📊 Fold 1/3
+2025-08-07 16:51:33,204 - utils.stacking - WARNING -     Advanced sampling failed: The target 'y' needs to have more than 1 class. Got 1 class instead, using original data
+2025-08-07 16:51:33,204 - models.base_model - INFO - [SVMRegressor] Initialized SVM Regressor with rbf kernel (C=1.0, epsilon=0.1)
+2025-08-07 16:51:33,205 - models.base_model - INFO - [SVMRegressor] Training on 3229 samples (removed 0 NaN samples)
+2025-08-07 16:51:33,214 - models.base_model - INFO - [SVMRegressor] Threshold optimization: Best F1=0.000 at threshold=0.0000
+2025-08-07 16:51:33,215 - models.base_model - INFO - [SVMRegressor] Optimal threshold (from training): 0.0000
+2025-08-07 16:51:33,215 - models.base_model - INFO - [SVMRegressor] Feature importance not available for non-linear kernels
+2025-08-07 16:51:33,215 - models.base_model - INFO - [SVMRegressor] Training completed. Support vectors: 0
+2025-08-07 16:51:33,215 - utils.pipeline_improvements - WARNING - Calibration failed: The 'estimator' parameter of CalibratedClassifierCV must be an object implementing 'fit' and 'predict_proba', an object implementing 'fit' and 'decision_function' or None. Got SVR() instead., returning original estimator
+2025-08-07 16:51:33,215 - utils.stacking - INFO -     ✓ Applied probability calibration
+2025-08-07 16:51:33,215 - utils.stacking - ERROR -   ✗ Enhanced svm_regressor failed: 'SVMRegressorModel' object has no attribute 'predict_proba'
+2025-08-07 16:51:33,215 - utils.stacking - INFO - 🎯 Enhanced out-of-fold stacking completed!
+2025-08-07 16:51:33,216 - __main__ - INFO - 
+🧠 Phase 2: Training enhanced meta-model with F₁ optimization...
+2025-08-07 16:51:33,216 - utils.enhanced_meta_models - INFO - 🧠 Training lightgbm meta-model with optimal threshold tuning...
+2025-08-07 16:51:33,514 - utils.evaluation - INFO - Optimal threshold for f1: 0.350000 (score: 0.808)
+2025-08-07 16:51:33,514 - utils.enhanced_meta_models - INFO -    Meta-model optimal threshold: 0.3500 (f1: 0.8081)
+2025-08-07 16:51:33,514 - utils.enhanced_meta_models - INFO -    Training probability range: [0.0002, 0.9996]
+2025-08-07 16:51:33,515 - __main__ - INFO - 🔗 Stacking raw features with meta-features...
+2025-08-07 16:51:33,585 - utils.enhanced_meta_models - INFO - 🧠 Training lightgbm meta-model with optimal threshold tuning...
+2025-08-07 16:51:34,429 - utils.evaluation - INFO - Optimal threshold for f1: 0.480000 (score: 1.000)
+2025-08-07 16:51:34,429 - utils.enhanced_meta_models - INFO -    Meta-model optimal threshold: 0.4800 (f1: 1.0000)
+2025-08-07 16:51:34,429 - utils.enhanced_meta_models - INFO -    Training probability range: [0.0000, 1.0000]
+2025-08-07 16:51:34,464 - __main__ - INFO - Meta-model test predictions range: [0.0000, 0.9999]
+2025-08-07 16:51:34,465 - __main__ - INFO - Using optimal threshold: 0.4800 for final predictions
+2025-08-07 16:51:34,465 - __main__ - INFO - 
+🎯 Phase 3: Creating ensemble predictions...
+2025-08-07 16:51:34,465 - utils.stacking - INFO - Creating ensemble predictions...
+2025-08-07 16:51:34,465 - utils.stacking - ERROR - Meta-model prediction failed: 'Booster' object has no attribute 'predict_proba'
+2025-08-07 16:51:34,465 - utils.stacking - INFO - ✓ Meta-model predictions generated
+2025-08-07 16:51:34,466 - utils.stacking - INFO - Ensemble created with 2 base models
+2025-08-07 16:51:34,466 - __main__ - INFO - 
+📊 Comprehensive Probability Analysis:
+2025-08-07 16:51:34,466 - utils.probability_analysis - INFO - 
+🎯 Ensemble Probability Distribution Analysis
+2025-08-07 16:51:34,466 - utils.probability_analysis - INFO - ============================================================
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO - 
+📊 lightgbm Probability Distribution Analysis:
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Count: 3,226
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Range: [0.6667, 1.0000]
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Mean ± Std: 0.7858 ± 0.1550
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Median: 0.6667
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Quartiles: Q25=0.6667, Q75=0.9989
+2025-08-07 16:51:34,470 - utils.probability_analysis - INFO -   Threshold Analysis:
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     > 0.5: 3,226 (100.0%)
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     > 0.7: 1,249 (38.7%)
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     > 0.9: 1,122 (34.8%)
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     < 0.1: 0 (0.0%)
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     < 0.3: 0 (0.0%)
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -   Class-specific Analysis:
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     Positive class (y=1): mean=0.9822, std=0.0569
+2025-08-07 16:51:34,471 - utils.probability_analysis - INFO -     Negative class (y=0): mean=0.6711, std=0.0223
+2025-08-07 16:51:34,943 - utils.probability_analysis - INFO - Probability histogram saved to reports/lightgbm_probability_distribution.png
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO - 
+📊 random_forest Probability Distribution Analysis:
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Count: 3,226
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Range: [0.6668, 0.9998]
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Mean ± Std: 0.7895 ± 0.1504
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Median: 0.6719
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Quartiles: Q25=0.6668, Q75=0.9926
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Threshold Analysis:
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     > 0.5: 3,226 (100.0%)
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     > 0.7: 1,376 (42.7%)
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     > 0.9: 1,117 (34.6%)
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     < 0.1: 0 (0.0%)
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     < 0.3: 0 (0.0%)
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -   Class-specific Analysis:
+2025-08-07 16:51:34,955 - utils.probability_analysis - INFO -     Positive class (y=1): mean=0.9757, std=0.0567
+2025-08-07 16:51:34,956 - utils.probability_analysis - INFO -     Negative class (y=0): mean=0.6809, std=0.0435
+2025-08-07 16:51:35,217 - utils.probability_analysis - INFO - Probability histogram saved to reports/random_forest_probability_distribution.png
+2025-08-07 16:51:35,226 - utils.probability_analysis - INFO - 
+📈 Model Comparison Summary:
+2025-08-07 16:51:35,226 - utils.probability_analysis - INFO - Model           Mean     Std      >0.5%    Range       
+2025-08-07 16:51:35,226 - utils.probability_analysis - INFO - -------------------------------------------------------
+2025-08-07 16:51:35,226 - utils.probability_analysis - INFO - lightgbm        0.7858   0.1550   100.0    [0.667, 1.000]
+2025-08-07 16:51:35,226 - utils.probability_analysis - INFO - random_forest   0.7895   0.1504   100.0    [0.667, 1.000]
+2025-08-07 16:51:35,227 - __main__ - WARNING - ⚠️ Meta-model probability issues:
+2025-08-07 16:51:35,228 - __main__ - WARNING -   - Meta-model: 66.7% predictions >0.9 - model may be overconfident
+2025-08-07 16:51:35,228 - __main__ - WARNING -   - Meta-model: Only 0.0% predictions in [0.3, 0.7] range - model has poor calibration
+2025-08-07 16:51:35,228 - __main__ - INFO - 
+🎯 Advanced Individual Model Threshold Optimization (Unbalanced Test Set):
+2025-08-07 16:51:35,234 - __main__ - INFO - 🎯 Optimal threshold (f1): 0.8082
+2025-08-07 16:51:35,234 - __main__ - INFO -    F1=0.978, P=0.990, R=0.967
+2025-08-07 16:51:35,234 - __main__ - INFO -    Predicted positives: 1162/3226 (36.0%)
+2025-08-07 16:51:35,240 - __main__ - INFO - 🎯 Optimal threshold (precision): 0.9999
+2025-08-07 16:51:35,240 - __main__ - INFO -    F1=0.411, P=1.000, R=0.259
+2025-08-07 16:51:35,240 - __main__ - INFO -    Predicted positives: 308/3226 (9.5%)
+2025-08-07 16:51:35,246 - __main__ - INFO - 🎯 Optimal threshold (pr_auc): 0.8082
+2025-08-07 16:51:35,246 - __main__ - INFO -    F1=0.978, P=0.990, R=0.967
+2025-08-07 16:51:35,246 - __main__ - INFO -    Predicted positives: 1162/3226 (36.0%)
+2025-08-07 16:51:35,247 - __main__ - INFO - 🎯 Found threshold 0.6672 for 100% recall with precision 0.775
+2025-08-07 16:51:35,253 - __main__ - INFO - 🎯 100% Recall Threshold Results:
+2025-08-07 16:51:35,253 - __main__ - INFO -    Threshold: 0.6672
+2025-08-07 16:51:35,253 - __main__ - INFO -    Precision: 0.775
+2025-08-07 16:51:35,253 - __main__ - INFO -    Recall: 1.000
+2025-08-07 16:51:35,254 - __main__ - INFO -    F1: 0.873
+2025-08-07 16:51:35,254 - __main__ - INFO -    Predicted Positives: 1535/3226 (47.6%)
+2025-08-07 16:51:35,254 - __main__ - INFO -    False Negatives: 0 (target: 0)
+2025-08-07 16:51:35,254 - __main__ - INFO -   lightgbm 100% recall: threshold=0.6672, precision=0.775, FN=0
+2025-08-07 16:51:35,254 - __main__ - INFO -   lightgbm: threshold=0.9999, PRECISION=1.000
+2025-08-07 16:51:35,259 - __main__ - INFO - 🎯 Optimal threshold (f1): 0.8543
+2025-08-07 16:51:35,260 - __main__ - INFO -    F1=0.959, P=0.967, R=0.951
+2025-08-07 16:51:35,260 - __main__ - INFO -    Predicted positives: 1170/3226 (36.3%)
+2025-08-07 16:51:35,265 - __main__ - INFO - 🎯 Optimal threshold (precision): 0.9998
+2025-08-07 16:51:35,267 - __main__ - INFO -    F1=0.133, P=1.000, R=0.071
+2025-08-07 16:51:35,267 - __main__ - INFO -    Predicted positives: 85/3226 (2.6%)
+2025-08-07 16:51:35,272 - __main__ - INFO - 🎯 Optimal threshold (pr_auc): 0.8543
+2025-08-07 16:51:35,272 - __main__ - INFO -    F1=0.959, P=0.967, R=0.951
+2025-08-07 16:51:35,273 - __main__ - INFO -    Predicted positives: 1170/3226 (36.3%)
+2025-08-07 16:51:35,273 - __main__ - INFO - 🎯 Found threshold 0.6668 for 100% recall with precision 0.369
+2025-08-07 16:51:35,279 - __main__ - INFO - 🎯 100% Recall Threshold Results:
+2025-08-07 16:51:35,279 - __main__ - INFO -    Threshold: 0.6668
+2025-08-07 16:51:35,279 - __main__ - INFO -    Precision: 0.369
+2025-08-07 16:51:35,279 - __main__ - INFO -    Recall: 1.000
+2025-08-07 16:51:35,279 - __main__ - INFO -    F1: 0.539
+2025-08-07 16:51:35,279 - __main__ - INFO -    Predicted Positives: 3226/3226 (100.0%)
+2025-08-07 16:51:35,279 - __main__ - INFO -    False Negatives: 0 (target: 0)
+2025-08-07 16:51:35,279 - __main__ - INFO -   random_forest 100% recall: threshold=0.6668, precision=0.369, FN=0
+2025-08-07 16:51:35,279 - __main__ - INFO -   random_forest: threshold=0.9998, PRECISION=1.000
+2025-08-07 16:51:35,279 - __main__ - INFO - 
+🎯 100% Recall Threshold Summary:
+2025-08-07 16:51:35,279 - __main__ - INFO - ✅ lightgbm: Can achieve 100% recall at threshold 0.6672
+2025-08-07 16:51:35,279 - __main__ - INFO - ✅ random_forest: Can achieve 100% recall at threshold 0.6668
+2025-08-07 16:51:35,279 - __main__ - INFO - 💡 TIP: Use 'perfect_recall_threshold' from threshold_results for zero false negatives
+2025-08-07 16:51:35,279 - __main__ - INFO - ⚠️  WARNING: 100% recall thresholds may produce many false positives
+2025-08-07 16:51:35,279 - __main__ - INFO - 
+📊 Portfolio-aware ensemble optimization:
+2025-08-07 16:51:35,279 - utils.advanced_optimization - INFO - 📊 Portfolio-aware threshold optimization for 20 positions...
+2025-08-07 16:51:35,279 - utils.advanced_optimization - INFO - 🎯 Finding optimal threshold using top_k_percent strategy...
+2025-08-07 16:51:35,285 - utils.advanced_optimization - INFO - 🎯 Top 0.6199628022318662% strategy: threshold=0.9999, F1=0.096, precision=1.000, recall=0.050
+2025-08-07 16:51:35,285 - utils.advanced_optimization - INFO -    Selected 20/3226 samples (0.6%)
+2025-08-07 16:51:35,285 - utils.advanced_optimization - INFO - 🎯 Finding optimal threshold using f1 strategy...
+2025-08-07 16:51:35,286 - utils.advanced_optimization - INFO -    Applied constraints: min_precision=0.1, min_recall=0.1
+2025-08-07 16:51:35,286 - utils.advanced_optimization - INFO - 🎯 f1 optimization: threshold=0.8271, score=0.975
+2025-08-07 16:51:35,286 - utils.advanced_optimization - INFO -    Final metrics: P=0.983, R=0.966, F1=0.975
+2025-08-07 16:51:35,286 - utils.advanced_optimization - INFO - 🎯 Finding optimal threshold using precision strategy...
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO - 🎯 precision optimization: threshold=0.9997, score=1.000
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO -    Final metrics: P=1.000, R=0.130, F1=0.231
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO - 🎯 Best portfolio threshold: 0.5000
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO -    Portfolio size: 0/20
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO -    Risk tolerance: moderate
+2025-08-07 16:51:35,287 - utils.advanced_optimization - INFO -    Precision: 0.000
+2025-08-07 16:51:35,288 - utils.advanced_optimization - INFO -    Portfolio score: 0.000
+2025-08-07 16:51:35,288 - __main__ - INFO - 📊 Portfolio-optimized threshold: 0.5000
+2025-08-07 16:51:35,288 - __main__ - INFO -    Expected positions: 0
+2025-08-07 16:51:35,288 - __main__ - INFO -    Portfolio precision: 0.000
+2025-08-07 16:51:35,288 - __main__ - INFO - 
+🔄 Phase 4: Converting regression and quantile predictions to binary decisions...
+2025-08-07 16:51:35,288 - __main__ - INFO - 
+🎯 Phase 5: Creating advanced final ensemble predictions...
+2025-08-07 16:51:35,288 - __main__ - INFO - 
+🗳️ Rank-and-vote ensemble...
+2025-08-07 16:51:35,288 - __main__ - INFO - 🗳️ Creating rank-and-vote ensemble...
+2025-08-07 16:51:35,288 - __main__ - INFO -    lightgbm: 3226 votes (cutoff: 1.000000)
+2025-08-07 16:51:35,288 - __main__ - INFO -    random_forest: 3226 votes (cutoff: 1.000000)
+2025-08-07 16:51:35,288 - __main__ - INFO -    Majority consensus: 3226 samples (threshold: 2/2)
+2025-08-07 16:51:35,289 - __main__ - INFO -    Meta-model: 17 votes (cutoff: 0.999923)
+2025-08-07 16:51:35,289 - __main__ - INFO - 🎯 Final ensemble result: 3226 buy signals
+2025-08-07 16:51:35,289 - __main__ - INFO - 🎯 Weighted ensemble created with performance-based weights:
+2025-08-07 16:51:35,289 - __main__ - INFO -    lightgbm: 0.500
+2025-08-07 16:51:35,289 - __main__ - INFO -    random_forest: 0.500
+2025-08-07 16:51:35,289 - __main__ - INFO - 
+📈 Phase 6: Evaluation...
+2025-08-07 16:51:35,346 - utils.evaluation - INFO - Optimal threshold for f1: 0.810000 (score: 0.977)
+2025-08-07 16:51:35,410 - utils.evaluation - INFO - Optimal threshold for f1: 0.840000 (score: 0.959)
+2025-08-07 16:51:35,582 - utils.evaluation - INFO - Optimal threshold for f1: 0.010000 (score: 0.712)
+2025-08-07 16:51:35,699 - utils.evaluation - INFO - Optimal threshold for f1: 0.910000 (score: 0.973)
+2025-08-07 16:51:35,708 - __main__ - INFO - 
+📊 Enhanced quantile regression evaluation...
+2025-08-07 16:51:35,766 - utils.evaluation - INFO - Optimal threshold for f1: 0.810000 (score: 0.977)
+2025-08-07 16:51:35,829 - utils.evaluation - INFO - Optimal threshold for f1: 0.840000 (score: 0.959)
+2025-08-07 16:51:36,003 - utils.evaluation - INFO - Optimal threshold for f1: 0.010000 (score: 0.712)
+2025-08-07 16:51:36,122 - utils.evaluation - INFO - Optimal threshold for f1: 0.910000 (score: 0.973)
+2025-08-07 16:51:36,130 - __main__ - WARNING - ⚠️ Batch signal quality check FAILED: PR-AUC (0.000) < 0.05 → This batch has insufficient predictive signal
+2025-08-07 16:51:36,130 - __main__ - WARNING - 🚫 Recommendation: Skip trading signals for this batch
+2025-08-07 16:51:36,130 - __main__ - INFO - 🎯 Dynamic ensemble weights based on ROC-AUC:
+2025-08-07 16:51:36,130 - __main__ - INFO -   xgboost: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,130 - __main__ - INFO -   lightgbm: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,130 - __main__ - INFO -   lightgbm_regressor: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,130 - __main__ - INFO -   catboost: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,131 - __main__ - INFO -   random_forest: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,131 - __main__ - INFO -   svm: 0.1667 (ROC-AUC: 0.5000)
+2025-08-07 16:51:36,131 - __main__ - INFO - 
+💾 Phase 6: Export and visualization...
+2025-08-07 16:51:36,133 - utils.evaluation - INFO - Performance summary exported to logs/training_summary_2025-08-07_16-51.csv
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - Detailed results exported to logs/detailed_results_2025-08-07_16-51.json
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - === Training Summary ===
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - Best base model F1: 0.9774
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - Mean base model F1: 0.9681
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - Meta-model improvement: -0.2657
+2025-08-07 16:51:36,150 - utils.evaluation - INFO - Ensemble improvement: -0.0041
+2025-08-07 16:51:36,150 - __main__ - INFO - 
+📈 Performing rolling backtest for drift detection...
+2025-08-07 16:51:36,158 - __main__ - INFO - 
+🔍 Detecting data drift...
+2025-08-07 16:51:36,328 - utils.pipeline_improvements - WARNING - Data drift detected in 72 features
+2025-08-07 16:51:36,328 - __main__ - WARNING - ⚠️ Data drift detected in 72 features
+2025-08-07 16:51:36,328 - __main__ - WARNING - Recommendation: retrain_model
+2025-08-07 16:51:36,944 - utils.visualization - INFO - Confusion matrices saved to reports\confusion_matrices_2025-08-07_16-51.png
+2025-08-07 16:51:37,715 - utils.visualization - INFO - Performance comparison saved to reports\performance_comparison_2025-08-07_16-51.png
+2025-08-07 16:51:37,905 - utils.visualization - INFO - Class distribution saved to reports\class_distribution_2025-08-07_16-51.png
+2025-08-07 16:51:37,916 - utils.visualization - INFO - Training report generated with 3 plots:
+2025-08-07 16:51:37,916 - utils.visualization - INFO -   confusion_matrices: reports\confusion_matrices_2025-08-07_16-51.png
+2025-08-07 16:51:37,916 - utils.visualization - INFO -   performance: reports\performance_comparison_2025-08-07_16-51.png
+2025-08-07 16:51:37,916 - utils.visualization - INFO -   class_distribution: reports\class_distribution_2025-08-07_16-51.png
+2025-08-07 16:51:37,916 - __main__ - INFO - 
+============================================================
+INVESTMENT COMMITTEE TRAINING REPORT
+============================================================
+Timestamp: 2025-08-07 16:51:37
+Training Time: 351.6 seconds
+Configuration: TrainingConfig
+
+BASE MODEL PERFORMANCE:
+----------------------------------------
+LIGHTGBM:
+  Accuracy:  0.9836
+  Precision: 0.9905
+  Recall:    0.9647
+  F1-Score:  0.9774
+  ROC-AUC:   0.9982
+  Threshold: 0.8100
+  Predicted: 1158
+
+RANDOM_FOREST:
+  Accuracy:  0.9696
+  Precision: 0.9603
+  Recall:    0.9571
+  F1-Score:  0.9587
+  ROC-AUC:   0.9941
+  Threshold: 0.8400
+  Predicted: 1185
+
+ENSEMBLE PERFORMANCE:
+----------------------------------------
+META_MODEL:
+  Accuracy:  0.7015
+  Precision: 0.5525
+  Recall:    1.0000
+  F1-Score:  0.7118
+  ROC-AUC:   0.9650
+  Threshold: 0.0100
+  Predicted: 2152
+
+SIMPLE_ENSEMBLE:
+  Accuracy:  0.9805
+  Precision: 0.9804
+  Recall:    0.9664
+  F1-Score:  0.9733
+  ROC-AUC:   0.9973
+  Threshold: 0.9100
+  Predicted: 1172
+
+COMPARISON METRICS:
+----------------------------------------
+Best Base F1:        0.9774
+Mean Base F1:        0.9681
+Meta Improvement:    -0.2657
+Ensemble Improvement: -0.0041
+============================================================
+2025-08-07 16:51:37,917 - utils.stacking - INFO - Good stacking quality: 9 diverse models
+2025-08-07 16:51:37,917 - __main__ - INFO - Stacking quality: {'valid_models_train': np.int64(9), 'valid_models_test': np.int64(9), 'total_models': 2, 'mean_correlation': np.float64(nan), 'max_correlation': np.float64(nan), 'train_pred_ranges': {'lightgbm_range': (0.0, 0.0), 'random_forest_range': (0.0, 1.0)}}
+2025-08-07 16:51:37,917 - __main__ - INFO - ✅ Training completed successfully!
+2025-08-07 16:51:37,921 - __main__ - INFO - 
+📊 Performance Summary:
+    type  accuracy  precision  recall     f1  roc_auc  pr_auc  threshold  predicted_positives  true_positives  false_positives  false_negatives
+    base    0.9836     0.9905  0.9647 0.9774   0.9982  0.9966       0.81                 1158            1147               11               42
+    base    0.9696     0.9603  0.9571 0.9587   0.9941  0.9895       0.84                 1185            1138               47               51
+ensemble    0.7015     0.5525  1.0000 0.7118   0.9650  0.9594       0.01                 2152            1189              963                0
+ensemble    0.9805     0.9804  0.9664 0.9733   0.9973  0.9945       0.91                 1172            1149               23               40
