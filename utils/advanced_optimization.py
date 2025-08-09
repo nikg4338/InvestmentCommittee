@@ -75,29 +75,39 @@ def find_optimal_threshold_advanced(y_true: np.ndarray, y_pred: np.ndarray,
         return threshold, f1, results
     
     elif strategy == 'pr_auc':
-        # Optimize for precision-recall AUC (good for imbalanced data)
+        # Optimize using PR-AUC as the quality signal (computed on CONTINUOUS scores),
+        # while selecting an operating threshold via F1 along the PR curve.
+        # Note: PR-AUC itself doesn't depend on a threshold; we return the threshold
+        # that maximizes F1 (subject to constraints if provided) and report AP.
         precision, recall, thresholds = precision_recall_curve(y_true, y_pred)
-        
-        # Calculate PR-AUC for each threshold
-        pr_auc_scores = []
-        for i, thresh in enumerate(thresholds):
-            y_pred_thresh = (y_pred >= thresh).astype(int)
-            if np.sum(y_pred_thresh) > 0:  # Avoid empty predictions
-                pr_auc = average_precision_score(y_true, y_pred_thresh)
-                pr_auc_scores.append(pr_auc)
-            else:
-                pr_auc_scores.append(0.0)
-        
-        best_idx = np.argmax(pr_auc_scores)
+
+        # Robust AP on continuous scores (never compute AP on binarized predictions)
+        try:
+            ap = average_precision_score(y_true, y_pred)
+        except Exception:
+            ap = 0.0
+
+        # Choose an operating point by maximizing F1 across PR points
+        f1_scores = 2 * precision * recall / (precision + recall + 1e-8)
+
+        # Apply optional constraints
+        valid_mask = (precision >= min_precision) & (recall >= min_recall)
+        if np.any(valid_mask):
+            valid_indices = np.where(valid_mask)[0]
+            best_idx = valid_indices[np.argmax(f1_scores[valid_indices])]
+        else:
+            best_idx = np.argmax(f1_scores)
+
+        # Map PR curve index to a probability threshold (sklearn returns thresholds len-1 vs PR len)
         optimal_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-        best_score = pr_auc_scores[best_idx]
-        
+        best_score = ap
+
         results = {
             'strategy': 'pr_auc',
-            'precision': precision[best_idx],
-            'recall': recall[best_idx],
-            'f1_score': 2 * precision[best_idx] * recall[best_idx] / (precision[best_idx] + recall[best_idx] + 1e-8),
-            'pr_auc': best_score
+            'precision': float(precision[best_idx]) if len(precision) else 0.0,
+            'recall': float(recall[best_idx]) if len(recall) else 0.0,
+            'f1_score': float(f1_scores[best_idx]) if len(f1_scores) else 0.0,
+            'pr_auc': float(ap)
         }
         
     else:

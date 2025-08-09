@@ -571,7 +571,8 @@ def export_training_results(evaluation_results: Dict[str, Any],
     summary_df = create_performance_summary(evaluation_results)
     if not summary_df.empty:
         summary_path = f'logs/training_summary_{timestamp}.csv'
-        summary_df.to_csv(summary_path, index=False)
+        # Preserve model names as a column for easier downstream parsing
+        summary_df.reset_index().to_csv(summary_path, index=False)
         exported_files['summary'] = summary_path
         logger.info(f"Performance summary exported to {summary_path}")
         

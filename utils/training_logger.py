@@ -12,7 +12,8 @@ def log_training_summary(batch_number: int,
                         nn_accuracy: float,
                         training_time_seconds: float,
                         timeframe: str = "1Day",
-                        log_file: str = "logs/training_summary.csv"):
+                        log_file: str = "logs/training_summary.csv",
+                        **kwargs):
     """
     Log training summary to CSV file.
     
@@ -43,11 +44,21 @@ def log_training_summary(batch_number: int,
         'training_time_seconds': round(training_time_seconds, 2),
         'training_time_minutes': round(training_time_seconds / 60, 2)
     }
+
+    # Merge optional fields if provided (ignore unknowns in CSV header)
+    # Common extras: model_name, pr_auc, roc_auc, notes
+    optional_fields = ['model_name', 'pr_auc', 'roc_auc', 'notes']
+    for k in optional_fields:
+        if k in kwargs:
+            row_data[k] = kwargs[k]
     
     try:
         with open(log_file, 'a', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['timestamp', 'batch_number', 'symbols_trained', 'timeframe',
-                         'xgb_accuracy', 'nn_accuracy', 'training_time_seconds', 'training_time_minutes']
+            base_fields = ['timestamp', 'batch_number', 'symbols_trained', 'timeframe',
+                           'xgb_accuracy', 'nn_accuracy', 'training_time_seconds', 'training_time_minutes']
+            # Extend header dynamically if optional fields present
+            dynamic_fields = [f for f in optional_fields if f in row_data]
+            fieldnames = base_fields + dynamic_fields
             
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -57,7 +68,8 @@ def log_training_summary(batch_number: int,
                 logger.info(f"Created new training summary log: {log_file}")
             
             # Write the data row
-            writer.writerow(row_data)
+            # Ensure we only write known fieldnames (DictWriter will ignore extras)
+            writer.writerow({k: row_data.get(k) for k in fieldnames})
             
         logger.info(f"Training summary logged to {log_file}")
         logger.info(f"  Batch {batch_number}: {symbols_trained} symbols, XGB: {xgb_accuracy:.3f}, NN: {nn_accuracy:.3f}, Time: {training_time_seconds / 60:.1f}m")

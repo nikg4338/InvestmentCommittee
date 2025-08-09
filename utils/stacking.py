@@ -43,6 +43,29 @@ from utils.pipeline_improvements import (
 
 logger = logging.getLogger(__name__)
 
+def _ensure_numeric_df(X: pd.DataFrame) -> pd.DataFrame:
+    """Drop non-numeric columns and coerce convertible ones to numeric; fill NaNs."""
+    if not isinstance(X, pd.DataFrame):
+        return X
+    Xn = X.copy()
+    drop_cols = []
+    for c in Xn.columns:
+        if Xn[c].dtype == 'object':
+            coerced = pd.to_numeric(Xn[c], errors='coerce')
+            if coerced.notna().sum() == 0:
+                drop_cols.append(c)
+            else:
+                Xn[c] = coerced
+        elif Xn[c].dtype.name not in ['int64', 'int32', 'float64', 'float32', 'bool']:
+            Xn[c] = pd.to_numeric(Xn[c], errors='coerce')
+    if drop_cols:
+        logger.warning(f"Dropping non-numeric columns for stacking: {drop_cols}")
+        Xn = Xn.drop(columns=drop_cols, errors='ignore')
+    Xn = Xn.replace([np.inf, -np.inf], np.nan)
+    if not Xn.empty:
+        Xn = Xn.apply(lambda s: s.fillna(s.median()) if s.dtype.kind in 'fc' else s)
+    return Xn
+
 def is_regressor_model(model_name: str) -> bool:
     """Check if a model name corresponds to a regression model."""
     return 'regressor' in model_name.lower() or model_name.endswith('_regressor')
@@ -232,7 +255,7 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
     
     # Prepare cross-validation data
     try:
-        X_cv, y_cv, skf = prepare_cv_data(X_train, y_train, config.cross_validation)
+        X_cv, y_cv, skf = prepare_cv_data(_ensure_numeric_df(X_train), y_train, config.cross_validation)
         n_folds = skf.n_splits
         logger.info(f"Using {n_folds} stratified folds")
     except Exception as e:
@@ -294,9 +317,9 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 logger.info(f"  Fold {fold + 1}/{n_folds}")
                 
                 # Split data for this fold
-                X_fold_train = X_cv.iloc[train_idx]
+                X_fold_train = _ensure_numeric_df(X_cv.iloc[train_idx])
                 y_fold_train = y_cv.iloc[train_idx]
-                X_fold_val = X_cv.iloc[val_idx]
+                X_fold_val = _ensure_numeric_df(X_cv.iloc[val_idx])
                 y_fold_val = y_cv.iloc[val_idx]
                 
                 # Guard: ensure both classes exist in the training portion of this fold
@@ -308,18 +331,27 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 balance_method = model_info.get('balance_method', 'smote')
                 try:
                     X_fold_balanced, y_fold_balanced = prepare_balanced_data(
-                        X_fold_train, y_fold_train, balance_method
+                        _ensure_numeric_df(X_fold_train), y_fold_train, balance_method
                     )
                 except Exception as e:
                     logger.warning(f"Resampling failed for fold {fold} of {model_name}: {e}. Using original data.")
                     X_fold_balanced, y_fold_balanced = X_fold_train, y_fold_train
+                
+                # Check if we still have multiple classes after balancing
+                if pd.Series(y_fold_balanced).nunique() < 2:
+                    logger.warning(f"Skipping fold {fold} for {model_name}: single-class after balancing.")
+                    continue
                 
                 # Train model on this fold with optional Optuna params
                 model_class = model_info['class']
                 if optuna_params:
                     # Merge Optuna params with default config
                     combined_params = {**model_info.get('params', {}), **optuna_params}
-                    fold_model = model_class(**combined_params)
+                    # Check if model expects model_params dict (like XGBoostModel) or direct params
+                    if model_class.__name__ in ['XGBoostModel']:
+                        fold_model = model_class(model_params=combined_params)
+                    else:
+                        fold_model = model_class(**combined_params)
                 else:
                     fold_model = model_class()
                 
@@ -347,7 +379,7 @@ def out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 oof_store[model_name][val_idx] = val_predictions  # Store in OOF bookkeeping
                 
                 # Predict on test set
-                test_predictions = get_model_predictions_safe(fold_model, X_test, model_name)
+                test_predictions = get_model_predictions_safe(fold_model, _ensure_numeric_df(X_test), model_name)
                 fold_predictions.append(test_predictions)
                 
                 fold_models.append(fold_model)
@@ -759,9 +791,24 @@ def enhanced_out_of_fold_stacking(X_train: pd.DataFrame, y_train: pd.Series,
                 model_class = model_info['class']
                 if optuna_params:
                     combined_params = {**model_info.get('params', {}), **optuna_params}
-                    fold_model = model_class(**combined_params)
+                    # Check if model expects model_params dict (like XGBoostModel) or direct params
+                    if model_class.__name__ in ['XGBoostModel']:
+                        fold_model = model_class(model_params=combined_params)
+                    else:
+                        fold_model = model_class(**combined_params)
                 else:
                     fold_model = model_class()
+                
+                # Check if we have multiple classes after balancing
+                unique_classes = y_fold_balanced.nunique()
+                if unique_classes < 2:
+                    logger.warning(f"    Skipping fold {fold} for {model_name}: only {unique_classes} class(es) after balancing")
+                    # Fill with default predictions
+                    train_meta_features[val_idx, model_idx] = 0.5  # Default probability
+                    fold_predictions.append(np.full(len(X_test), 0.5))  # Default test predictions
+                    fold_models.append(None)  # No trained model for this fold
+                    model_thresholds[model_name].append(0.5)  # Default threshold
+                    continue
                 
                 # Train model
                 fold_model.train(X_fold_balanced, y_fold_balanced)

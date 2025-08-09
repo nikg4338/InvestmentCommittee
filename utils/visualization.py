@@ -32,6 +32,12 @@ def ensure_reports_dir() -> str:
     os.makedirs(reports_dir, exist_ok=True)
     return reports_dir
 
+def ensure_plots_dir() -> str:
+    """Ensure plots directory exists and return path"""
+    plots_dir = 'plots'
+    os.makedirs(plots_dir, exist_ok=True)
+    return plots_dir
+
 def get_timestamp() -> str:
     """Get timestamp string for file naming"""
     return datetime.now().strftime('%Y-%m-%d_%H-%M')
@@ -116,7 +122,7 @@ def plot_confusion_matrices(confusion_matrices: Dict[str, np.ndarray],
     
     # Save plot
     if config.save_plots:
-        reports_dir = ensure_reports_dir()
+        reports_dir = ensure_plots_dir()
         timestamp = get_timestamp()
         filename = f'confusion_matrices_{timestamp}.{config.plot_format}'
         filepath = os.path.join(reports_dir, filename)
@@ -214,7 +220,7 @@ def plot_model_performance(metrics_df: pd.DataFrame,
     
     # Save plot
     if config.save_plots:
-        reports_dir = ensure_reports_dir()
+        reports_dir = ensure_plots_dir()
         timestamp = get_timestamp()
         filename = f'performance_comparison_{timestamp}.{config.plot_format}'
         filepath = os.path.join(reports_dir, filename)
@@ -312,7 +318,7 @@ def plot_training_curves(training_history: Dict[str, Dict[str, List[float]]],
     
     # Save plot
     if config.save_plots:
-        reports_dir = ensure_reports_dir()
+        reports_dir = ensure_plots_dir()
         timestamp = get_timestamp()
         filename = f'training_curves_{timestamp}.{config.plot_format}'
         filepath = os.path.join(reports_dir, filename)
@@ -404,7 +410,7 @@ def plot_threshold_analysis(threshold_results: Dict[str, Dict[str, float]],
     
     # Save plot
     if config.save_plots:
-        reports_dir = ensure_reports_dir()
+        reports_dir = ensure_plots_dir()
         timestamp = get_timestamp()
         filename = f'threshold_analysis_{timestamp}.{config.plot_format}'
         filepath = os.path.join(reports_dir, filename)
@@ -467,7 +473,7 @@ def plot_class_distribution(y_train: pd.Series, y_test: pd.Series,
     
     # Save plot
     if config.save_plots:
-        reports_dir = ensure_reports_dir()
+        reports_dir = ensure_plots_dir()
         timestamp = get_timestamp()
         filename = f'class_distribution_{timestamp}.{config.plot_format}'
         filepath = os.path.join(reports_dir, filename)

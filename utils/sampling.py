@@ -25,6 +25,44 @@ from config.training_config import DataBalancingConfig, get_default_config
 
 logger = logging.getLogger(__name__)
 
+def _ensure_numeric_dataframe(X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure the feature matrix contains only numeric columns suitable for
+    resampling libraries (e.g., SMOTE). Non-numeric/object columns are
+    dropped; convertible strings are coerced to numeric.
+
+    Returns a new DataFrame with numeric dtypes only.
+    """
+    if not isinstance(X, pd.DataFrame):
+        return X
+
+    X_num = X.copy()
+
+    # Attempt to coerce object columns to numeric; drop those that remain non-numeric
+    non_numeric_to_drop = []
+    for col in X_num.columns:
+        if X_num[col].dtype == 'object':
+            coerced = pd.to_numeric(X_num[col], errors='coerce')
+            # If coercion results in all NaNs, drop the column (e.g., ticker strings)
+            if coerced.notna().sum() == 0:
+                non_numeric_to_drop.append(col)
+            else:
+                X_num[col] = coerced
+        elif X_num[col].dtype.name not in ['int64', 'int32', 'float64', 'float32', 'bool']:
+            # Coerce any exotic dtypes to float64
+            X_num[col] = pd.to_numeric(X_num[col], errors='coerce')
+
+    if non_numeric_to_drop:
+        logger.warning(f"Dropping non-numeric columns before resampling: {non_numeric_to_drop}")
+        X_num = X_num.drop(columns=non_numeric_to_drop, errors='ignore')
+
+    # Replace inf with NaN, then fill NaNs with column medians (SMOTE cannot handle NaNs)
+    X_num = X_num.replace([np.inf, -np.inf], np.nan)
+    if not X_num.empty:
+        X_num = X_num.apply(lambda s: s.fillna(s.median()) if s.dtype.kind in 'fc' else s)
+
+    return X_num
+
 def cap_majority_ratio(X: pd.DataFrame, y: pd.Series, 
                       max_ratio: float = None) -> Tuple[pd.DataFrame, pd.Series]:
     """
@@ -73,7 +111,7 @@ def cap_majority_ratio(X: pd.DataFrame, y: pd.Series,
     logger.info(f"Capping majority class {maj_class} from {max(n0, n1)} to {keep_majority} samples")
     
     # Create temporary DataFrame for easier manipulation
-    df = X.copy()
+    df = _ensure_numeric_dataframe(X)
     df['target'] = y.values
     
     # Sample majority class
@@ -107,6 +145,9 @@ def basic_oversample(X: pd.DataFrame, y: pd.Series,
     """
     logger.info("Applying basic oversampling")
     
+    # Ensure numeric safety for resampling
+    X = _ensure_numeric_dataframe(X)
+
     if IMBLEARN_AVAILABLE:
         try:
             ros = RandomOverSampler(random_state=random_state)
@@ -169,6 +210,9 @@ def smote_oversample(X: pd.DataFrame, y: pd.Series,
     Returns:
         SMOTE oversampled dataset
     """
+    # Ensure numeric safety for resampling
+    X = _ensure_numeric_dataframe(X)
+
     if not IMBLEARN_AVAILABLE:
         logger.warning("SMOTE not available, falling back to basic oversampling")
         return basic_oversample(X, y, random_state)
@@ -227,6 +271,9 @@ def smoteenn_resample(X: pd.DataFrame, y: pd.Series,
     Returns:
         SMOTEENN resampled dataset
     """
+    # Ensure numeric safety for resampling
+    X = _ensure_numeric_dataframe(X)
+
     if not IMBLEARN_AVAILABLE:
         logger.warning("SMOTEENN not available, falling back to SMOTE")
         return smote_oversample(X, y, k_neighbors, random_state)
@@ -338,7 +385,7 @@ def controlled_balance(X: pd.DataFrame, y: pd.Series,
     logger.info(f"Balancing: majority {majority_class} from {majority_count} to {majority_target}")
     
     # Create temporary DataFrame
-    df = X.copy()
+    df = _ensure_numeric_dataframe(X)
     df['target'] = y.values
     
     # Sample majority class down
@@ -379,6 +426,9 @@ def prepare_balanced_data(X: pd.DataFrame, y: pd.Series,
         config = get_default_config().data_balancing
     
     logger.info(f"Preparing balanced data using method: {method}")
+
+    # Safety: ensure numeric-only features before any balancing
+    X = _ensure_numeric_dataframe(X)
     
     # Check if we have multiple classes
     counts = y.value_counts()

@@ -15,6 +15,8 @@ Features engineered:
 - Market context features
 
 Target variable: Bull put spread trade eligibility based on trade_filter criteria
+
+ENHANCED: Now includes comprehensive data validation to prevent synthetic data contamination.
 """
 
 import json
@@ -30,19 +32,30 @@ warnings.filterwarnings('ignore')
 from trading.execution.alpaca_client import AlpacaClient
 from trading.strategy.trade_filter import is_trade_eligible
 
+# Import data validation to ensure authentic Alpaca data
+from utils.data_validation import AlpacaDataValidator, validate_training_data
+
 logger = logging.getLogger(__name__)
 
 
 class AlpacaDataCollector:
     """
     Collects and engineers training data from Alpaca API for the Committee of Five models.
+    
+    ENHANCED: Includes comprehensive data validation to ensure only authentic 
+    Alpaca API data is used for training, preventing synthetic data contamination.
     """
     
-    def __init__(self):
-        """Initialize the data collector with Alpaca client."""
+    def __init__(self, enable_validation: bool = True):
+        """Initialize the data collector with Alpaca client and data validator."""
         try:
             self.alpaca_client = AlpacaClient()
-            logger.info("✅ Alpaca client initialized successfully")
+            self.enable_validation = enable_validation
+            if enable_validation:
+                self.validator = AlpacaDataValidator()
+                logger.info("✅ Alpaca client and data validator initialized successfully")
+            else:
+                logger.info("✅ Alpaca client initialized successfully (validation disabled)")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Alpaca client: {e}")
             raise
@@ -1031,23 +1044,113 @@ class AlpacaDataCollector:
         logger.info(f"   📋 Features: {len([col for col in final_df.columns if col not in ['ticker', 'target']])}")
         
         return final_df
+    
+    def validate_collected_data(self, df: pd.DataFrame, 
+                               strict_mode: bool = True,
+                               save_validation_report: bool = True) -> Dict[str, Any]:
+        """
+        Validate collected data to ensure it's authentic Alpaca API data.
+        
+        Args:
+            df: DataFrame to validate
+            strict_mode: Whether to use strict validation
+            save_validation_report: Whether to save validation report
+            
+        Returns:
+            Validation results dictionary
+        """
+        if not self.enable_validation:
+            logger.warning("⚠️  Data validation is disabled - skipping validation")
+            return {'is_valid': True, 'warnings': ['Validation disabled']}
+        
+        logger.info("🔍 Validating collected data for synthetic patterns...")
+        
+        # Run comprehensive validation
+        results = self.validator.validate_alpaca_data(df)
+        
+        # Add collection metadata
+        results['collection_metadata'] = {
+            'collector_class': 'AlpacaDataCollector',
+            'collection_timestamp': datetime.now().isoformat(),
+            'data_shape': df.shape,
+            'unique_tickers': df['ticker'].nunique() if 'ticker' in df.columns else 0,
+            'date_range': f"{df['timestamp'].min()} to {df['timestamp'].max()}" if 'timestamp' in df.columns else 'Unknown'
+        }
+        
+        # Log validation results
+        status = "✅ VALID" if results['is_valid'] else "❌ INVALID"
+        confidence = results.get('confidence', 0.0)
+        
+        logger.info(f"🔍 Validation result: {status} (confidence: {confidence:.2f})")
+        
+        if results['errors']:
+            logger.error("❌ Validation errors found:")
+            for error in results['errors']:
+                logger.error(f"   • {error}")
+        
+        if results['warnings']:
+            logger.warning("⚠️  Validation warnings:")
+            for warning in results['warnings']:
+                logger.warning(f"   • {warning}")
+        
+        # Save validation report if requested
+        if save_validation_report:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_file = f"logs/data_validation_report_{timestamp}.json"
+            
+            try:
+                import os
+                os.makedirs('logs', exist_ok=True)
+                
+                with open(report_file, 'w') as f:
+                    import json
+                    json.dump(results, f, indent=2, default=str)
+                
+                logger.info(f"📋 Validation report saved: {report_file}")
+                
+            except Exception as e:
+                logger.warning(f"Could not save validation report: {e}")
+        
+        # Add recommendations based on results
+        if not results['is_valid']:
+            logger.error("🚨 CRITICAL: Data validation failed!")
+            logger.error("   Recommendations:")
+            logger.error("   • DO NOT use this data for training")
+            logger.error("   • Check Alpaca API connection and data source")
+            logger.error("   • Remove any synthetic or test data from pipeline")
+            logger.error("   • Re-run data collection with fresh API calls")
+        elif confidence < 0.8:
+            logger.warning("⚠️  Data validation passed but with low confidence")
+            logger.warning("   Recommendations:")
+            logger.warning("   • Review data quality issues")
+            logger.warning("   • Consider re-collecting problematic symbols")
+            logger.warning("   • Monitor model performance closely")
+        else:
+            logger.info("✅ Data validation passed - data appears authentic and suitable for training")
+        
+        return results
 
 
 def main():
     """
-    Command-line interface for the AlpacaDataCollector.
+    Command-line interface for the AlpacaDataCollector with data validation.
     """
     import argparse
     
-    parser = argparse.ArgumentParser(description='Collect training data from Alpaca API')
-    parser.add_argument('--batches', type=str, help='Comma-separated batch numbers (e.g., "1,2,3") or single batch number')
+    parser = argparse.ArgumentParser(description='Collect and validate training data from Alpaca API')
+    parser.add_argument('--batch', type=int, help='Single batch number to process')
+    parser.add_argument('--batches', type=str, help='Comma-separated batch numbers (e.g., "1,2,3")')
     parser.add_argument('--max-symbols', type=int, default=50, help='Maximum symbols per batch')
-    parser.add_argument('--output-file', type=str, default='alpaca_training_data.csv', help='Output CSV file path')
+    parser.add_argument('--output', type=str, help='Output CSV file path (auto-generated if not specified)')
+    parser.add_argument('--disable-validation', action='store_true', help='Disable data validation')
+    parser.add_argument('--strict-validation', action='store_true', help='Use strict validation mode')
     
     args = parser.parse_args()
     
     # Parse batch numbers
-    if args.batches:
+    if args.batch:
+        batch_numbers = [args.batch]
+    elif args.batches:
         try:
             if ',' in args.batches:
                 batch_numbers = [int(b.strip()) for b in args.batches.split(',')]
@@ -1059,14 +1162,27 @@ def main():
     else:
         batch_numbers = [1, 2]  # Default for backward compatibility
     
+    # Auto-generate output filename if not specified
+    if not args.output:
+        if args.batch:
+            args.output = f'data/batch_{args.batch}_data.csv'
+        else:
+            batch_str = '_'.join(map(str, batch_numbers))
+            args.output = f'alpaca_training_data_batches_{batch_str}.csv'
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
     try:
-        # Initialize collector
-        collector = AlpacaDataCollector()
+        # Initialize collector with validation settings
+        enable_validation = not args.disable_validation
+        collector = AlpacaDataCollector(enable_validation=enable_validation)
+        
+        logger.info(f"🚀 Starting data collection for batches: {batch_numbers}")
+        logger.info(f"📁 Output file: {args.output}")
+        logger.info(f"🔍 Validation: {'Enabled' if enable_validation else 'Disabled'}")
         
         # Collect data for specified batches
         training_data = collector.collect_training_data(
@@ -1075,21 +1191,54 @@ def main():
         )
         
         if len(training_data) > 0:
+            # Validate collected data
+            if enable_validation:
+                logger.info("🔍 Running comprehensive data validation...")
+                validation_results = collector.validate_collected_data(
+                    training_data, 
+                    strict_mode=args.strict_validation
+                )
+                
+                if not validation_results['is_valid']:
+                    logger.error("🚨 CRITICAL: Data validation failed!")
+                    logger.error("❌ Training data contains synthetic or invalid patterns")
+                    logger.error("🔄 Please re-run data collection or check data sources")
+                    return  # Don't save invalid data
+                else:
+                    logger.info("✅ Data validation passed - proceeding with save")
+            
+            # Ensure output directory exists
+            import os
+            os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
+            
             # Save to specified output file
-            training_data.to_csv(args.output_file, index=False)
-            logger.info(f"💾 Training data saved to {args.output_file}")
+            training_data.to_csv(args.output, index=False)
+            logger.info(f"💾 Validated training data saved to {args.output}")
             
             # Print sample data
             print(f"\n📋 Sample of collected data:")
             print(training_data.head())
             print(f"\n📊 Data shape: {training_data.shape}")
-            print(f"🎯 Target distribution: {training_data['target'].value_counts().to_dict()}")
+            if 'target' in training_data.columns:
+                print(f"🎯 Target distribution: {training_data['target'].value_counts().to_dict()}")
+            print(f"🏢 Unique tickers: {training_data['ticker'].nunique() if 'ticker' in training_data.columns else 'Unknown'}")
+            
+            # Final validation summary
+            if enable_validation:
+                confidence = validation_results.get('confidence', 0.0)
+                print(f"\n🔍 Validation Summary:")
+                print(f"   Status: ✅ VALID")
+                print(f"   Confidence: {confidence:.2f}")
+                print(f"   Warnings: {len(validation_results.get('warnings', []))}")
+                print(f"   🎉 Data is ready for training!")
             
         else:
             logger.error("❌ No training data collected")
     
     except Exception as e:
         logger.error(f"❌ Data collection failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 if __name__ == "__main__":

@@ -524,9 +524,15 @@ def optuna_optimize_base_model_for_f1(model_class, X: pd.DataFrame, y: pd.Series
                 # Create model instance
                 if hasattr(model_class, 'model'):
                     # If it's a wrapper class, get the underlying model
-                    model = model_class(**params).model
+                    if model_class.__name__ in ['XGBoostModel']:
+                        model = model_class(model_params=params).model
+                    else:
+                        model = model_class(**params).model
                 else:
-                    model = model_class(**params)
+                    if model_class.__name__ in ['XGBoostModel']:
+                        model = model_class(model_params=params)
+                    else:
+                        model = model_class(**params)
                 
                 # Cross-validation with the target metric
                 cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)

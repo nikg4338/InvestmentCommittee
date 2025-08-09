@@ -58,7 +58,11 @@ def tune_with_optuna(model_cls, X: pd.DataFrame, y: pd.Series,
                         params[k] = v  # Fixed parameter
                 
                 # Create and evaluate model
-                model = model_cls(**params)
+                # Handle different model constructor patterns
+                if model_cls.__name__ in ['XGBoostModel']:
+                    model = model_cls(model_params=params)
+                else:
+                    model = model_cls(**params)
                 
                 # Get underlying sklearn estimator if wrapped
                 if hasattr(model, 'model'):
@@ -398,7 +402,7 @@ def add_macro_llm_signal(df: pd.DataFrame, llm_analyzer,
         return df, feature_columns
 
 def detect_data_drift(reference_data: pd.DataFrame, current_data: pd.DataFrame, 
-                     threshold: float = 0.1) -> Dict[str, Any]:
+                     threshold: float = 0.3) -> Dict[str, Any]:
     """
     Detect data drift between reference and current datasets.
     

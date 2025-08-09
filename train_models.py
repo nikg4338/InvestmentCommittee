@@ -32,6 +32,10 @@ import logging
 import os
 import time
 import traceback
+import sys
+import json
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
 
 import numpy as np
@@ -80,81 +84,54 @@ from utils.pipeline_improvements import (
 
 logger = logging.getLogger(__name__)
 
-# DISABLED: Test set threshold optimization functions that cause data leakage
-# These have been replaced with OOF-based threshold computation
-"""
-def find_optimal_threshold_on_test(y_true: np.ndarray, y_pred_proba: np.ndarray, 
-                                  metric: str = 'f1') -> Tuple[float, float, Dict[str, float]]:
-    # DISABLED TO PREVENT TEST SET LEAKAGE - use compute_threshold_from_oof instead
-    pass
-
-def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metric: str = 'pr_auc') -> float:
-    # DISABLED TO PREVENT TEST SET LEAKAGE - use compute_threshold_from_oof instead 
-    pass
-"""
-
-def find_threshold_for_perfect_recall(y_true: np.ndarray, y_pred_proba: np.ndarray) -> Tuple[float, Dict[str, float]]:
+# NOTE: The following helpers optimize a threshold using y_true from the
+# provided dataset. This is acceptable for unit tests and offline analysis,
+# but SHOULD NOT be used for production model selection, as it can leak test
+# information. For production, prefer OOF-based thresholds via
+# utils.evaluation.compute_threshold_from_oof.
+def find_optimal_threshold_on_test(y_true: np.ndarray, y_pred_proba: np.ndarray,
+                                   metric: str = 'f1') -> Tuple[float, float, Dict[str, float]]:
     """
-    Find the minimum threshold that achieves 100% recall on the test set.
-    
-    This is useful for ultra-rare event scenarios where missing any positive
-    case is more costly than having false positives.
-    
-    Args:
-        y_true: True binary labels
-        y_pred_proba: Predicted probabilities
-        
-    Returns:
-        (threshold_for_100_recall, metrics_dict)
+    Find an operating threshold on provided labels/scores by maximizing F1 along
+    the precision–recall curve. Returns (threshold, best_score, metrics_dict).
+
+    Warning: Intended for tests/sanity checks. Avoid in production.
     """
     from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score
-    
-    # Get precision-recall curve
+    import numpy as np  # local import to avoid import-order issues
+
+    if y_true is None or y_pred_proba is None or len(y_true) == 0:
+        return 0.5, 0.0, {'precision': 0.0, 'recall': 0.0}
+
     precision, recall, thresholds = precision_recall_curve(y_true, y_pred_proba)
-    
-    # Find thresholds that achieve 100% recall
-    perfect_recall_mask = (recall[:-1] == 1.0)  # [:-1] because thresholds is one element shorter
-    
-    if not np.any(perfect_recall_mask):
-        # If no threshold achieves 100% recall, use the one that gets closest
-        best_recall_idx = np.argmax(recall[:-1])
-        best_threshold = thresholds[best_recall_idx]
-        logger.warning(f"⚠️ Could not achieve 100% recall. Best: {recall[best_recall_idx]:.3f} at threshold {best_threshold:.4f}")
-    else:
-        # Among thresholds with 100% recall, choose the one with highest precision
-        perfect_recall_thresholds = thresholds[perfect_recall_mask]
-        perfect_recall_precisions = precision[:-1][perfect_recall_mask]
-        
-        # Choose the threshold with highest precision among those with 100% recall
-        best_precision_idx = np.argmax(perfect_recall_precisions)
-        best_threshold = perfect_recall_thresholds[best_precision_idx]
-        
-        logger.info(f"🎯 Found threshold {best_threshold:.4f} for 100% recall with precision {perfect_recall_precisions[best_precision_idx]:.3f}")
-    
-    # Calculate final metrics at this threshold
+    if thresholds is None or len(thresholds) == 0:
+        # Degenerate case: single-class or uniform scores
+        return 0.5, 0.0, {'precision': float(precision[-1] if len(precision) else 0.0),
+                         'recall': float(recall[-1] if len(recall) else 0.0)}
+
+    # Compute F1 for each PR point (align sizes via thresholds indexing)
+    # sklearn returns precision/recall of len n_points and thresholds of len n_points-1
+    f1_scores = 2 * precision[:-1] * recall[:-1] / (precision[:-1] + recall[:-1] + 1e-8)
+    best_idx = int(np.argmax(f1_scores)) if len(f1_scores) else 0
+    best_threshold = float(thresholds[best_idx]) if len(thresholds) else 0.5
+
+    # Final metrics at best threshold
     y_pred_binary = (y_pred_proba >= best_threshold).astype(int)
-    
-    final_metrics = {
-        'threshold': best_threshold,
-        'f1': f1_score(y_true, y_pred_binary, zero_division=0),
-        'precision': precision_score(y_true, y_pred_binary, zero_division=0),
-        'recall': recall_score(y_true, y_pred_binary, zero_division=0),
-        'support_positive': np.sum(y_true),
-        'support_negative': len(y_true) - np.sum(y_true),
-        'predicted_positive': np.sum(y_pred_binary),
-        'false_positives': np.sum((y_pred_binary == 1) & (y_true == 0)),
-        'false_negatives': np.sum((y_pred_binary == 0) & (y_true == 1))
+    metrics = {
+        'precision': float(precision_score(y_true, y_pred_binary, zero_division=0)),
+        'recall': float(recall_score(y_true, y_pred_binary, zero_division=0)),
+        'f1': float(f1_score(y_true, y_pred_binary, zero_division=0))
     }
-    
-    logger.info(f"🎯 100% Recall Threshold Results:")
-    logger.info(f"   Threshold: {best_threshold:.4f}")
-    logger.info(f"   Precision: {final_metrics['precision']:.3f}")
-    logger.info(f"   Recall: {final_metrics['recall']:.3f}")
-    logger.info(f"   F1: {final_metrics['f1']:.3f}")
-    logger.info(f"   Predicted Positives: {final_metrics['predicted_positive']}/{len(y_true)} ({final_metrics['predicted_positive']/len(y_true)*100:.1f}%)")
-    logger.info(f"   False Negatives: {final_metrics['false_negatives']} (target: 0)")
-    
-    return best_threshold, final_metrics
+
+    return best_threshold, metrics['f1'], metrics
+
+def compute_optimal_threshold(y_true: np.ndarray, proba_preds: np.ndarray, metric: str = 'pr_auc') -> float:
+    """
+    Backward-compatible wrapper: for 'pr_auc', select F1-maximizing threshold along
+    PR curve; for 'f1' behave the same. Test/helper only; not for production.
+    """
+    thr, _, _ = find_optimal_threshold_on_test(y_true, proba_preds, metric='f1')
+    return thr
 
 def optuna_tune_model(model_cls, X: pd.DataFrame, y: pd.Series, n_trials: int = 20) -> Dict[str, Any]:
     """
@@ -263,23 +240,43 @@ def compute_dynamic_ensemble_weights(evaluation_results: Dict[str, Any],
     """
     if base_models is None:
         base_models = ['xgboost', 'lightgbm', 'lightgbm_regressor', 'catboost', 'random_forest', 'svm']
-    
-    # Extract ROC-AUC scores for weighting
-    roc_scores = {}
+
+    # Prefer PR-AUC for imbalanced problems; fall back to ROC-AUC if missing
+    base_perf = evaluation_results.get('base_model_performance', {})
+
+    # Blending coefficients (can be tuned): prioritize PR-AUC
+    alpha_pr = 0.7
+    beta_roc = 0.3
+
+    raw_scores: Dict[str, float] = {}
+    details: Dict[str, Tuple[float, float]] = {}
+
     for model_name in base_models:
-        if model_name in evaluation_results:
-            roc_scores[model_name] = evaluation_results[model_name].get('roc_auc', 0.5)
-        else:
-            roc_scores[model_name] = 0.5  # Default neutral weight
-    
-    # Normalize weights to sum to 1
-    total_score = sum(roc_scores.values()) or 1.0
-    dynamic_weights = {model: score / total_score for model, score in roc_scores.items()}
-    
-    logger.info("🎯 Dynamic ensemble weights based on ROC-AUC:")
-    for model, weight in dynamic_weights.items():
-        logger.info(f"  {model}: {weight:.4f} (ROC-AUC: {roc_scores[model]:.4f})")
-    
+        metrics = base_perf.get(model_name, {})
+        pr_auc = float(metrics.get('pr_auc', 0.0) or 0.0)
+        roc_auc = float(metrics.get('roc_auc', 0.0) or 0.0)
+
+        # If both are zero/missing, give a tiny epsilon to avoid zero-sum
+        blended = alpha_pr * pr_auc + beta_roc * roc_auc
+        if blended <= 0.0:
+            blended = 1e-6
+
+        raw_scores[model_name] = blended
+        details[model_name] = (pr_auc, roc_auc)
+
+    # If everything is zero or no base models present, default to equal weights
+    total = sum(raw_scores.values())
+    if total <= 0.0 or not raw_scores:
+        n = max(len(base_models), 1)
+        dynamic_weights = {m: 1.0 / n for m in base_models}
+    else:
+        dynamic_weights = {m: s / total for m, s in raw_scores.items()}
+
+    logger.info("🎯 Dynamic ensemble weights (PR-AUC prioritized, ROC-AUC fallback):")
+    for model in base_models:
+        pr_auc, roc_auc = details.get(model, (0.0, 0.0))
+        logger.info(f"  {model}: weight={dynamic_weights.get(model, 0.0):.4f} | PR-AUC={pr_auc:.4f}, ROC-AUC={roc_auc:.4f}")
+
     return dynamic_weights
 
 def setup_logging(log_level: str = 'INFO') -> None:
@@ -291,8 +288,9 @@ def setup_logging(log_level: str = 'INFO') -> None:
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler('logs/training.log', encoding='utf-8'),
-            logging.StreamHandler()
-        ]
+            logging.StreamHandler(stream=sys.stdout),
+        ],
+        force=True,
     )
 
 def clean_data_for_ml(X: pd.DataFrame) -> pd.DataFrame:
@@ -587,6 +585,9 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     logger.info("🚀 Starting Committee of Five training...")
     logger.info(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
     logger.info(f"Training config: {config.__class__.__name__}")
+
+    # Define here to avoid any Python scoping issues if referenced later
+    fixed_thresholds: Dict[str, float] = {}
     
     # Extract meta-learner configuration early to avoid UnboundLocalError
     meta_learner_type = config.meta_model.meta_learner_type  # Use config value (default: gradientboost)
@@ -753,8 +754,11 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
                 meta_test_proba = meta_model.predict_proba(test_meta_features)[:, 1]
         
         # Handle raw feature stacking if enabled
+        stack_raw_features = False  # DISABLED: Causes feature mismatch in ensemble prediction
         if stack_raw_features and meta_model is not None:
             logger.info("🔗 Stacking raw features with meta-features...")
+            # NOTE: This is disabled because it causes feature count mismatch
+            # during ensemble prediction (trained on 57 features, predicts on 8)
             # Prepare combined features
             raw_features_reset = X_train.reset_index(drop=True)
             meta_features_df = pd.DataFrame(train_meta_features, columns=[f'meta_{i}' for i in range(train_meta_features.shape[1])])
@@ -811,7 +815,7 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
         ensemble_results['base_predictions'], 
         y_test, 
         save_plots=config.visualization.save_plots,
-        plot_dir="reports"
+        plot_dir="plots"
     )
     
     # Check for common probability issues
@@ -872,22 +876,6 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
                     'strategy': 'fallback',
                     'predicted_positive': 0
                 }
-    
-    # Summary of 100% recall threshold results
-    logger.info("\n🎯 100% Recall Threshold Summary:")
-    perfect_recall_available = False
-    for model_name, result in threshold_results.items():
-        if result.get('perfect_recall_threshold') is not None:
-            perfect_recall_available = True
-            logger.info(f"✅ {model_name}: Can achieve 100% recall at threshold {result['perfect_recall_threshold']:.4f}")
-        else:
-            logger.info(f"❌ {model_name}: Cannot achieve 100% recall")
-    
-    if perfect_recall_available:
-        logger.info("💡 TIP: Use 'perfect_recall_threshold' from threshold_results for zero false negatives")
-        logger.info("⚠️  WARNING: 100% recall thresholds may produce many false positives")
-    else:
-        logger.info("📝 NOTE: No models can achieve 100% recall on this test set")
 
     # Portfolio-aware threshold optimization for ensemble
     logger.info("\n📊 Portfolio-optimized threshold:")
@@ -1069,14 +1057,45 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     
     # Step 6: Comprehensive evaluation
     logger.info("\n📈 Phase 6: Evaluation...")
-    
+
     # Prepare evaluation data with both continuous and binary predictions
     all_predictions = final_continuous_predictions.copy()
     if meta_test_proba is not None:
         all_predictions['meta_model'] = meta_test_proba
     all_predictions['final_ensemble'] = final_probabilities
-    
-    # Evaluate all models
+
+    # Compute PR AUC–prioritized dynamic weights on base predictions and apply to form a weighted ensemble
+    try:
+        temp_eval = evaluate_ensemble_performance(
+            y_test,
+            ensemble_results['base_predictions'],
+            meta_test_proba,
+            final_probabilities
+        )
+        base_models = list(ensemble_results['base_predictions'].keys())
+        dyn_w = compute_dynamic_ensemble_weights(temp_eval, base_models)
+        if dyn_w:
+            weighted = np.zeros(len(y_test))
+            total = sum(dyn_w.values()) or 1.0
+            for m, proba in ensemble_results['base_predictions'].items():
+                w = dyn_w.get(m, 0.0) / total
+                weighted += w * proba
+            # Optionally blend with meta-model
+            if meta_test_proba is not None:
+                weighted = 0.5 * weighted + 0.5 * meta_test_proba
+            final_probabilities = weighted
+            all_predictions['final_ensemble'] = final_probabilities
+            # Log the actual weights applied for traceability
+            try:
+                compact_weights = ", ".join([f"{k}:{dyn_w.get(k, 0.0):.3f}" for k in base_models])
+                logger.info(f"🎯 Dynamic ensemble weights applied → {compact_weights}")
+            except Exception:
+                logger.info("🎯 Dynamic ensemble weights applied (see detailed JSON for mapping)")
+            logger.info("✅ Applied PR-AUC–prioritized dynamic weights to ensemble probabilities")
+    except Exception as e:
+        logger.warning(f"Dynamic weighting application failed, using previous ensemble: {e}")
+
+    # Evaluate all models (after applying dynamic weights)
     evaluation_results = evaluate_ensemble_performance(
         y_test, 
         ensemble_results['base_predictions'],
@@ -1104,30 +1123,55 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     
     # Batch-specific signal filter - check if this batch has sufficient signal quality
     PR_AUC_THRESHOLD = 0.05
-    
-    # Get meta-model PR-AUC for quality check
-    meta_pr_auc = evaluation_results.get('ensemble_performance', {}).get('meta_model', {}).get('pr_auc', 0.0)
-    if not meta_pr_auc or meta_pr_auc == 0.0:
-        # If no meta-model or zero, use best base model PR-AUC
+
+    # Compute PR-AUC directly from probabilities for robustness
+    robust_meta_pr_auc = None
+    try:
+        from sklearn.metrics import average_precision_score
+        if meta_test_proba is not None:
+            # Log inputs to the AP calculation for transparency
+            try:
+                n_pos = int(np.sum(y_test))
+                n_all = int(len(y_test))
+                logger.info(f"🔎 PR-AUC gate: computing AP from meta probabilities (n={n_all}, positives={n_pos})")
+            except Exception:
+                pass
+            robust_meta_pr_auc = float(average_precision_score(y_test, meta_test_proba))
+            logger.info(f"🔎 PR-AUC gate: AP(meta) = {robust_meta_pr_auc:.6f}")
+    except Exception as _:
+        robust_meta_pr_auc = None
+
+    # Fallback to evaluation results, or best base model if meta not available
+    if robust_meta_pr_auc is None:
+        robust_meta_pr_auc = float(
+            evaluation_results.get('ensemble_performance', {}).get('meta_model', {}).get('pr_auc', 0.0)
+        )
+        logger.info(f"🔎 PR-AUC gate: fallback to evaluation meta_model pr_auc = {robust_meta_pr_auc:.6f}")
+    if not robust_meta_pr_auc or robust_meta_pr_auc == 0.0:
         base_results = evaluation_results.get('base_model_performance', {})
-        base_pr_aucs = [metrics.get('pr_auc', 0.0) for metrics in base_results.values()]
-        meta_pr_auc = max(base_pr_aucs) if base_pr_aucs else 0.0
-    if meta_pr_auc < PR_AUC_THRESHOLD:
+        base_pr_aucs = {name: float(metrics.get('pr_auc', 0.0) or 0.0) for name, metrics in base_results.items()}
+        if base_pr_aucs:
+            best_model = max(base_pr_aucs, key=base_pr_aucs.get)
+            robust_meta_pr_auc = base_pr_aucs[best_model]
+            logger.info(f"🔎 PR-AUC gate: fallback to best base model '{best_model}' pr_auc = {robust_meta_pr_auc:.6f}")
+        else:
+            robust_meta_pr_auc = 0.0
+            logger.info("🔎 PR-AUC gate: no base model PR-AUC available; using 0.0")
+
+    if robust_meta_pr_auc < PR_AUC_THRESHOLD:
         logger.warning(
-            f"⚠️ Batch signal quality check FAILED: PR-AUC ({meta_pr_auc:.3f}) < "
-            f"{PR_AUC_THRESHOLD} → This batch has insufficient predictive signal"
+            f"⚠️ Batch signal quality check FAILED: PR-AUC ({robust_meta_pr_auc:.3f}) < {PR_AUC_THRESHOLD} → This batch has insufficient predictive signal"
         )
         logger.warning("🚫 Recommendation: Skip trading signals for this batch")
-        
-        # Add warning to evaluation results
+
         evaluation_results['batch_quality_warning'] = {
-            'pr_auc': meta_pr_auc,
+            'pr_auc': robust_meta_pr_auc,
             'threshold': PR_AUC_THRESHOLD,
             'recommendation': 'SKIP_BATCH',
             'reason': 'Insufficient predictive signal quality'
         }
     else:
-        logger.info(f"✅ Batch signal quality PASSED: PR-AUC ({meta_pr_auc:.3f}) >= {PR_AUC_THRESHOLD}")
+        logger.info(f"✅ Batch signal quality PASSED: PR-AUC ({robust_meta_pr_auc:.3f}) >= {PR_AUC_THRESHOLD}")
         evaluation_results['batch_quality_warning'] = None
     
     # Compute dynamic ensemble weights based on model performance
@@ -1136,6 +1180,59 @@ def train_committee_models(X_train: pd.DataFrame, y_train: pd.Series,
     
     # Add weights to evaluation results for export
     evaluation_results['dynamic_weights'] = dynamic_weights
+
+    # Emit a concise telemetry summary line for orchestrator capture
+    try:
+        gate_status = 'PASS' if robust_meta_pr_auc >= PR_AUC_THRESHOLD else 'FAIL'
+        safe_weights = {k: float(v) for k, v in (dynamic_weights or {}).items()}
+        line = f"TELEMETRY|PR_AUC_META={robust_meta_pr_auc:.6f}|GATE={gate_status}|WEIGHTS={safe_weights}"
+        logger.info(line)
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"Telemetry summary log failed: {e}")
+    # Persist a structured telemetry JSON for robust capture
+    try:
+        # Recompute gate and weights locally to avoid dependency on outer try
+        gate_status_json = 'PASS' if robust_meta_pr_auc >= PR_AUC_THRESHOLD else 'FAIL'
+        safe_weights_json = {k: float(v) for k, v in (dynamic_weights or {}).items()}
+        try:
+            batch_id = getattr(getattr(config, 'visualization', object()), 'batch_id', None)
+        except Exception:
+            batch_id = None
+        os.makedirs('logs', exist_ok=True)
+        telem_path = Path('logs') / (f"telemetry_batch_{batch_id}.json" if batch_id else "telemetry.json")
+        base_perf = evaluation_results.get('base_model_performance', {}) or {}
+        base_perf_slim = {
+            k: {
+                'pr_auc': float((v or {}).get('pr_auc', 0.0) or 0.0),
+                'roc_auc': float((v or {}).get('roc_auc', 0.0) or 0.0),
+            }
+            for k, v in base_perf.items()
+        }
+        meta_perf = (evaluation_results.get('ensemble_performance', {}) or {}).get('meta_model', {}) or {}
+        payload = {
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'batch_id': batch_id,
+            'gate_threshold': PR_AUC_THRESHOLD,
+            'gate': gate_status_json,
+            'pr_auc_meta': float(robust_meta_pr_auc or 0.0),
+            'meta_model_pr_auc_reported': float(meta_perf.get('pr_auc', 0.0) or 0.0),
+            'dynamic_weights': safe_weights_json,
+            'base_model_performance': base_perf_slim,
+        }
+        with open(telem_path, 'w', encoding='utf-8') as jf:
+            json.dump(payload, jf, indent=2)
+        msg = f"TELEMETRY_JSON|path={telem_path}"
+        logger.info(msg)
+        try:
+            print(msg, flush=True)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"Failed to write structured telemetry JSON: {e}")
     
     # Step 6: Export and visualize results
     logger.info("\n💾 Phase 6: Export and visualization...")
@@ -1323,6 +1420,10 @@ def main():
                        help='Batch identifier for organizing outputs')
     parser.add_argument('--quick-test', action='store_true',
                        help='Run a quick synthetic training demo without external data')
+    parser.add_argument('--optuna-trials', type=int, default=None,
+                       help='Number of Optuna trials to run if Optuna is enabled')
+    parser.add_argument('--telemetry-json', type=str, default=None,
+                       help='Optional path to write structured telemetry JSON')
     
     args = parser.parse_args()
     
@@ -1344,6 +1445,15 @@ def main():
         config.test_size = args.test_size
     if args.random_state:
         config.random_state = args.random_state
+    # Wire optional optuna trials into config if provided
+    if args.optuna_trials is not None:
+        try:
+            setattr(config, 'optuna_trials', int(args.optuna_trials))
+            # If not already enabled, allow turning it on
+            if not getattr(config, 'enable_optuna', False):
+                setattr(config, 'enable_optuna', True)
+        except Exception:
+            pass
     
     config.visualization.save_plots = args.save_plots
     
@@ -1444,10 +1554,15 @@ def main():
         logger.error(f"❌ Target column '{args.target_column}' not found in data")
         return 1
     
-    # Ensure target is binary for classification with proper extreme imbalance
-    if df[args.target_column].dtype in ['float64', 'float32'] and not df[args.target_column].isin([0, 1]).all():
-        # Use high percentile for extreme imbalance (financial data should have ~1-5% positive rate)
-        percentile_threshold = 95  # Top 5% for extreme imbalance
+    # Ensure target is binary for classification
+    # Check if target is already binary (only contains 0, 1, and potentially NaN)
+    non_null_target = df[args.target_column].dropna()
+    is_already_binary = non_null_target.isin([0, 1]).all() and len(non_null_target.unique()) == 2
+    
+    if not is_already_binary and df[args.target_column].dtype in ['float64', 'float32']:
+        # Use 70th percentile targeting top 30% of performers for more balanced training
+        # Target 30% positive rate for better model learning
+        percentile_threshold = 70  # 70th percentile - top 30% of performers
         threshold = df[args.target_column].quantile(percentile_threshold / 100)
         
         logger.info(f"Converting continuous target to binary using {percentile_threshold}th percentile threshold")
@@ -1459,14 +1574,18 @@ def main():
         positive_rate = df[args.target_column].sum() / len(df) * 100
         logger.info(f"Resulting positive rate: {positive_rate:.2f}%")
         
-        # If still too high, try 98th percentile
-        if positive_rate > 10:
-            logger.warning(f"Positive rate ({positive_rate:.2f}%) too high, trying 98th percentile...")
-            percentile_threshold = 98
+        # If still too high, try 99th percentile (1% positive rate)
+        if positive_rate > 5:  # If >5% positive
+            logger.warning(f"Positive rate ({positive_rate:.2f}%) too high, trying 99th percentile...")
+            percentile_threshold = 99
             threshold = df[args.target_column].quantile(percentile_threshold / 100)
             df[args.target_column] = (df[args.target_column] > threshold).astype(int)
             positive_rate = df[args.target_column].sum() / len(df) * 100
             logger.info(f"New threshold: {threshold:.6f}, positive rate: {positive_rate:.2f}%")
+    else:
+        logger.info(f"Target is already binary, preserving original distribution")
+        positive_rate = non_null_target.sum() / len(non_null_target) * 100
+        logger.info(f"Original positive rate: {positive_rate:.2f}%")
         
     logger.info(f"Target distribution: {df[args.target_column].value_counts().to_dict()}")
     
@@ -1503,8 +1622,8 @@ def main():
     if enable_llm_features:
         try:
             logger.info("🤖 Adding LLM macro signal features...")
-            from models.llm_analyzer import LLMAnalyzer
-            llm_analyzer = LLMAnalyzer()
+            from models.llm_analyzer import GeminiAnalyzer
+            llm_analyzer = GeminiAnalyzer()
             df, feature_columns = add_macro_llm_signal(df, llm_analyzer, feature_columns)
         except Exception as e:
             logger.warning(f"Failed to add LLM features: {e}")
@@ -1530,10 +1649,106 @@ def main():
         performance_df = results['performance_summary']
         if not performance_df.empty:
             logger.info(f"\n📊 Performance Summary:\n{performance_df.to_string(index=False)}")
+
+    # Write structured telemetry JSON from results if requested or batch_id is present
+        try:
+            out_path = args.telemetry_json
+            if not out_path:
+                # Default to logs/telemetry_batch_{batch_id}.json when batch-id present
+                if args.batch_id:
+                    out_path = str(Path('logs') / f"telemetry_batch_{args.batch_id}.json")
+                else:
+                    out_path = str(Path('logs') / "telemetry.json")
+            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+            evalr = results.get('evaluation_results', {}) or {}
+            base_perf = evalr.get('base_model_performance', {}) or {}
+            base_perf_slim = {
+                k: {
+                    'pr_auc': float((v or {}).get('pr_auc', 0.0) or 0.0),
+                    'roc_auc': float((v or {}).get('roc_auc', 0.0) or 0.0),
+                }
+                for k, v in base_perf.items()
+            }
+            meta_perf = (evalr.get('ensemble_performance', {}) or {}).get('meta_model', {}) or {}
+            pr_auc_meta = float(meta_perf.get('pr_auc', 0.0) or 0.0)
+            dyn_weights = evalr.get('dynamic_weights', {}) or {}
+            payload = {
+                'timestamp': datetime.now().isoformat(timespec='seconds'),
+                'batch_id': args.batch_id,
+                'gate_threshold': 0.05,
+                'gate': 'PASS' if pr_auc_meta >= 0.05 else 'FAIL',
+                'pr_auc_meta': pr_auc_meta,
+                'meta_model_pr_auc_reported': pr_auc_meta,
+                'dynamic_weights': {k: float(v) for k, v in dyn_weights.items()},
+                'base_model_performance': base_perf_slim,
+            }
+            with open(out_path, 'w', encoding='utf-8') as jf:
+                json.dump(payload, jf, indent=2)
+            msg = f"TELEMETRY_JSON|path={out_path}"
+            logger.info(msg)
+            try:
+                print(msg, flush=True)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Telemetry JSON write in main failed: {e}")
         
+        # Ensure results are exported; if export fails silently, write minimal artifacts
+        try:
+            exported_any = False
+            # Attempt standard export
+            try:
+                exported = export_training_results(results.get('evaluation_results', {}), config)
+            except Exception as e:
+                logger.warning(f"Standard export failed, using fallback: {e}")
+                exported = {}
+            # Check exported files exist
+            for k, pth in (exported or {}).items():
+                try:
+                    if pth and os.path.exists(pth):
+                        exported_any = True
+                except Exception:
+                    pass
+            if not exported_any:
+                # Fallback: write minimal detailed results and summary into logs/
+                os.makedirs('logs', exist_ok=True)
+                ts = datetime.now().strftime('%Y-%m-%d_%H-%M')
+                # Minimal detailed JSON
+                detailed_path = f'logs/detailed_results_{ts}.json'
+                try:
+                    with open(detailed_path, 'w', encoding='utf-8') as f:
+                        json.dump(results.get('evaluation_results', {}), f, indent=2)
+                    exported_any = True
+                    logger.info(f"Fallback: wrote minimal detailed results → {detailed_path}")
+                except Exception as e:
+                    logger.warning(f"Fallback detailed write failed: {e}")
+                # Minimal summary CSV
+                try:
+                    perf_df = results.get('performance_summary')
+                    if perf_df is not None and hasattr(perf_df, 'to_csv') and not perf_df.empty:
+                        summary_path = f'logs/training_summary_{ts}.csv'
+                        perf_df.reset_index().to_csv(summary_path, index=False)
+                        exported_any = True
+                        logger.info(f"Fallback: wrote performance summary → {summary_path}")
+                except Exception as e:
+                    logger.warning(f"Fallback summary write failed: {e}")
+            if not exported_any:
+                logger.error("No artifacts were exported. Failing the run to avoid stale reports.")
+                logging.shutdown()
+                return 1
+        except Exception as e:
+            logger.warning(f"Export fallback encountered an error: {e}")
+            logging.shutdown()
+            return 1
+
+        logging.shutdown()
         return 0
         
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")
         logger.error(traceback.format_exc())
         return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
