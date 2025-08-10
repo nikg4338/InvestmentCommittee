@@ -1,17 +1,17 @@
 {
-  "timestamp": "2025-08-09T02:41:35",
+  "timestamp": "2025-08-09T12:37:43",
   "batch_id": "1",
   "gate_threshold": 0.05,
   "gate": "PASS",
   "pr_auc_meta": 0.6188051492692664,
   "meta_model_pr_auc_reported": 0.6188051492692664,
   "dynamic_weights": {
-    "xgboost": 0.16053660826347363,
-    "lightgbm": 0.18933862261596443,
-    "lightgbm_regressor": 0.235494075484549,
-    "catboost": 0.21958346878788526,
-    "random_forest": 0.19504687750616806,
-    "svm": 3.473419596083663e-07
+    "xgboost": 0.1605366082634736,
+    "lightgbm": 0.1893386226159644,
+    "lightgbm_regressor": 0.23549407548454898,
+    "catboost": 0.21958346878788523,
+    "random_forest": 0.19504687750616803,
+    "svm": 3.4734195960836627e-07
   },
   "base_model_performance": {
     "xgboost": {

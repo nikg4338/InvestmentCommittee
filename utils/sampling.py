@@ -547,10 +547,21 @@ def apply_smote_for_regression(X: pd.DataFrame, y: pd.Series,
         # For SMOTE, use a dictionary to specify exactly how many samples we want
         if pos_count < neg_count:  # Positive is minority
             minority_class = 1
-            target_count = int(neg_count * 0.8)  # Upsample to 80% of majority
+            majority_count = neg_count
+            minority_count = pos_count
         else:  # Negative is minority 
             minority_class = 0
-            target_count = int(pos_count * 0.8)  # Upsample to 80% of majority
+            majority_count = pos_count
+            minority_count = neg_count
+            
+        # SMOTE should only over-sample, never under-sample
+        # Target count should be greater than current minority count
+        target_count = max(minority_count, int(majority_count * 0.8))
+        
+        # Ensure we're not trying to under-sample with SMOTE
+        if target_count <= minority_count:
+            # If target is not larger than current minority, just balance equally
+            target_count = majority_count
             
         # Use dictionary strategy for precise control
         sampling_strategy_dict = {minority_class: target_count}
@@ -599,48 +610,54 @@ def apply_smote_for_regression(X: pd.DataFrame, y: pd.Series,
                 logger.warning(f"⚠️ Random oversampling also failed: {ros_error}. Returning original data.")
                 return X.copy(), y.copy()
         
-        # Now we need to assign continuous values to the synthetic samples
-        # For original samples, keep original continuous values
-        # For synthetic samples, generate realistic continuous values
+        # Now reconstruct continuous targets for the resampled data
+        # SMOTE reorders and duplicates samples, so we need to handle this carefully
         
-        # Create mapping from original indices to continuous values
-        original_indices = np.arange(len(y))
+        # Create a mapping from the original samples to their continuous values
+        original_y_mapping = dict(zip(range(len(y)), y.values))
         
-        # Find which samples are synthetic (beyond original length)
-        n_original = len(y)
-        is_synthetic = np.arange(len(y_binary_resampled)) >= n_original
-        
-        # Initialize resampled continuous targets
+        # Initialize resampled continuous targets 
         y_resampled = np.zeros(len(y_binary_resampled))
         
-        # For original samples, use original continuous values
-        y_resampled[:n_original] = y.values
+        # For each resampled sample, assign appropriate continuous value
+        n_original = len(y)
         
-        # For synthetic samples, generate realistic continuous values
-        synthetic_indices = np.where(is_synthetic)[0]
-        synthetic_binary = y_binary_resampled[synthetic_indices]
-        
-        for i, syn_idx in enumerate(synthetic_indices):
-            if synthetic_binary[i] == 1:  # Positive synthetic sample
-                # Sample from positive distribution
-                positive_values = y[y > threshold]
-                if len(positive_values) > 0:
-                    # Add some noise to make it more realistic
-                    base_value = np.random.choice(positive_values)
-                    noise = np.random.normal(0, positive_values.std() * 0.1)
-                    y_resampled[syn_idx] = max(threshold + 0.001, base_value + noise)
-                else:
-                    y_resampled[syn_idx] = threshold + 0.001
-            else:  # Negative synthetic sample
-                # Sample from negative distribution
-                negative_values = y[y <= threshold]
-                if len(negative_values) > 0:
-                    base_value = np.random.choice(negative_values)
-                    noise = np.random.normal(0, negative_values.std() * 0.1)
-                    y_resampled[syn_idx] = min(threshold - 0.001, base_value + noise)
-                else:
-                    y_resampled[syn_idx] = threshold - 0.001
-        
+        for i in range(len(y_binary_resampled)):
+            if i < n_original:
+                # This might be an original sample (but SMOTE may have reordered)
+                # Use the binary class to determine the continuous value strategy
+                if y_binary_resampled[i] == 1:  # Positive class
+                    # Find a positive value from original data
+                    positive_values = y[y > threshold]
+                    if len(positive_values) > 0:
+                        y_resampled[i] = np.random.choice(positive_values)
+                    else:
+                        y_resampled[i] = threshold + 0.001
+                else:  # Negative class
+                    # Find a negative value from original data  
+                    negative_values = y[y <= threshold]
+                    if len(negative_values) > 0:
+                        y_resampled[i] = np.random.choice(negative_values)
+                    else:
+                        y_resampled[i] = threshold - 0.001
+            else:
+                # This is definitely a synthetic sample
+                if y_binary_resampled[i] == 1:  # Synthetic positive
+                    positive_values = y[y > threshold]
+                    if len(positive_values) > 0:
+                        base_value = np.random.choice(positive_values)
+                        noise = np.random.normal(0, positive_values.std() * 0.1)
+                        y_resampled[i] = max(threshold + 0.001, base_value + noise)
+                    else:
+                        y_resampled[i] = threshold + 0.001
+                else:  # Synthetic negative
+                    negative_values = y[y <= threshold]
+                    if len(negative_values) > 0:
+                        base_value = np.random.choice(negative_values)
+                        noise = np.random.normal(0, negative_values.std() * 0.1)
+                        y_resampled[i] = min(threshold - 0.001, base_value + noise)
+                    else:
+                        y_resampled[i] = threshold - 0.001
         # Convert back to pandas
         X_resampled_df = pd.DataFrame(X_resampled, columns=X.columns)
         y_resampled_series = pd.Series(y_resampled, name=y.name)
@@ -648,9 +665,10 @@ def apply_smote_for_regression(X: pd.DataFrame, y: pd.Series,
         # Log results
         final_pos_count = np.sum(y_resampled > threshold)
         final_neg_count = np.sum(y_resampled <= threshold)
+        n_synthetic = len(y_resampled) - len(y)
         
         logger.info(f"📈 Post-SMOTE distribution: {final_neg_count} negative, {final_pos_count} positive")
-        logger.info(f"✨ Generated {len(synthetic_indices)} synthetic samples")
+        logger.info(f"✨ Generated {n_synthetic} synthetic samples")
         logger.info(f"📊 Total samples: {len(y)} → {len(y_resampled)} ({len(y_resampled)/len(y):.2f}x)")
         
         return X_resampled_df, y_resampled_series

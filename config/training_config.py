@@ -199,8 +199,8 @@ def get_extreme_imbalance_config() -> TrainingConfig:
         # Regression models with Huber loss for robustness
         'lightgbm_regressor', 'xgboost_regressor', 'catboost_regressor', 
         'random_forest_regressor', 'svm_regressor',
-        # Phase 3: Quantile regression for uncertainty estimation
-        'lightgbm_quantile_regressor'
+        # Phase 3: Quantile regression for uncertainty estimation (commented out due to circular import)
+        # 'lightgbm_quantile_regressor'
     ]
     
     # Enable advanced pipeline improvements for extreme imbalance

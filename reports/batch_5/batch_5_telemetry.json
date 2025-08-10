@@ -1,0 +1,50 @@
+{
+  "timestamp": "2025-08-09T15:02:51",
+  "batch_id": "5",
+  "gate_threshold": 0.05,
+  "gate": "PASS",
+  "pr_auc_meta": 0.6398939850680073,
+  "meta_model_pr_auc_reported": 0.6398939850680073,
+  "dynamic_weights": {
+    "xgboost": 0.16882624898171675,
+    "lightgbm": 0.19567968646643535,
+    "lightgbm_regressor": 0.23010431246157112,
+    "catboost": 0.21311707840602626,
+    "random_forest": 0.1922723585721876,
+    "svm": 3.151120627980503e-07
+  },
+  "base_model_performance": {
+    "xgboost": {
+      "pr_auc": 0.45104134953863384,
+      "roc_auc": 0.7334559999999999
+    },
+    "lightgbm": {
+      "pr_auc": 0.5427069079956313,
+      "roc_auc": 0.8036319999999999
+    },
+    "catboost": {
+      "pr_auc": 0.6007770699359122,
+      "roc_auc": 0.852592
+    },
+    "random_forest": {
+      "pr_auc": 0.5309385263553246,
+      "roc_auc": 0.795048
+    },
+    "lightgbm_regressor": {
+      "pr_auc": 0.6713435684062661,
+      "roc_auc": 0.867632
+    },
+    "xgboost_regressor": {
+      "pr_auc": 0.5582262777243204,
+      "roc_auc": 0.7712960000000001
+    },
+    "random_forest_regressor": {
+      "pr_auc": 0.6490710570039993,
+      "roc_auc": 0.8796840000000001
+    },
+    "svm_regressor": {
+      "pr_auc": 0.3638879554522231,
+      "roc_auc": 0.659728
+    }
+  }
+}

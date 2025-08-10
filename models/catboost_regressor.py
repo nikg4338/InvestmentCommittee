@@ -83,7 +83,7 @@ class CatBoostRegressorModel(BaseModel):
         
         # Store hyperparameters - CatBoost uses different parameter names
         self.params = {
-            'loss_function': objective,
+            'loss_function': f"{objective}:delta={huber_slope}" if objective.lower() == 'huber' else objective,
             'iterations': iterations,
             'depth': depth,
             'learning_rate': learning_rate,
@@ -94,7 +94,7 @@ class CatBoostRegressorModel(BaseModel):
             **kwargs
         }
         
-        # Initialize model (CatBoost Huber loss doesn't need extra parameters in constructor)
+        # Initialize model (CatBoost Huber loss needs delta parameter)
         self.model = CatBoostRegressor(**self.params)
         
         # Training tracking
@@ -102,7 +102,7 @@ class CatBoostRegressorModel(BaseModel):
         self.feature_importance_ = None
         self.optimal_threshold_ = 0.0
         
-        self.log(f"Initialized CatBoost Regressor with Huber loss (delta={huber_slope})")
+        self.log(f"Initialized CatBoost Regressor with {objective} loss" + (f" (delta={huber_slope})" if objective.lower() == 'huber' else ""))
 
     def fit(self, X, y, **kwargs):
         """

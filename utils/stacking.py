@@ -158,7 +158,10 @@ def create_model_configs(config: Optional[TrainingConfig] = None) -> Dict[str, D
     
     model_configs = {}
     
-    for model_name in config.models_to_train:
+    # If no specific models are configured, use all available models
+    models_to_train = config.models_to_train if config.models_to_train is not None else list(MODEL_REGISTRY.keys())
+    
+    for model_name in models_to_train:
         if model_name in MODEL_REGISTRY:
             model_configs[model_name] = {
                 'class': MODEL_REGISTRY[model_name],
@@ -558,11 +561,30 @@ def create_ensemble_predictions(trained_models: Dict[str, Any],
         try:
             # Stack base predictions as features
             meta_features = np.column_stack(list(base_predictions.values()))
-            # Use safe predictor to accommodate models without predict_proba
-            meta_predictions = get_model_predictions_safe(meta_model, pd.DataFrame(meta_features), "meta_model")
-            logger.info("✓ Meta-model predictions generated")
+            meta_df = pd.DataFrame(meta_features)
+            
+            # Check feature dimension compatibility with meta-model
+            if hasattr(meta_model, 'n_features_in_'):
+                expected_features = meta_model.n_features_in_
+                actual_features = meta_df.shape[1]
+                
+                if expected_features != actual_features:
+                    logger.warning(f"Meta-model feature mismatch: expected {expected_features}, got {actual_features}")
+                    logger.warning(f"Available models: {list(base_predictions.keys())}")
+                    logger.warning("Skipping meta-model prediction due to feature dimension mismatch")
+                    meta_predictions = None
+                else:
+                    # Use safe predictor to accommodate models without predict_proba
+                    meta_predictions = get_model_predictions_safe(meta_model, meta_df, "meta_model")
+                    logger.info("✓ Meta-model predictions generated")
+            else:
+                # Fallback for models without n_features_in_ attribute
+                meta_predictions = get_model_predictions_safe(meta_model, meta_df, "meta_model")
+                logger.info("✓ Meta-model predictions generated (no feature validation)")
+                
         except Exception as e:
             logger.error(f"Meta-model prediction failed: {e}")
+            meta_predictions = None
     
     # Calculate simple average ensemble
     if base_predictions:
