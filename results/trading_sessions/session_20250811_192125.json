@@ -1,0 +1,126 @@
+{
+  "session_start": "2025-08-11T19:21:25.629900",
+  "session_duration": 141.47432208061218,
+  "symbols_processed": 32,
+  "signals_generated": 32,
+  "high_confidence_signals": 32,
+  "buy_signals": 0,
+  "sell_signals": 32,
+  "trades_executed": 0,
+  "trades_failed": 0,
+  "market_context": {
+    "sentiment": "NEUTRAL",
+    "spy_change": 0.3707033899641952,
+    "vix_level": 20.0
+  },
+  "top_signals": [
+    {
+      "symbol": "AAPL",
+      "action": "SELL",
+      "strength": 0.029212653681062007,
+      "confidence": 0.9325036819019781,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "MSFT",
+      "action": "SELL",
+      "strength": 0.023502112853848886,
+      "confidence": 0.9460164738206489,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "GOOGL",
+      "action": "SELL",
+      "strength": 0.023643118526792416,
+      "confidence": 0.9458540249601528,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "AMZN",
+      "action": "SELL",
+      "strength": 0.023708612094013953,
+      "confidence": 0.9455353631914893,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "TSLA",
+      "action": "SELL",
+      "strength": 0.029774266409581272,
+      "confidence": 0.9318146750720435,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "NVDA",
+      "action": "SELL",
+      "strength": 0.023750891685283486,
+      "confidence": 0.945727739872209,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "META",
+      "action": "SELL",
+      "strength": 0.02343239240724954,
+      "confidence": 0.9460997490871322,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "NFLX",
+      "action": "SELL",
+      "strength": 0.023425289949280358,
+      "confidence": 0.9466816972488066,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "ORCL",
+      "action": "SELL",
+      "strength": 0.023673375816982492,
+      "confidence": 0.9458136993647488,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "CRM",
+      "action": "SELL",
+      "strength": 0.03603531313329881,
+      "confidence": 0.9235472333469387,
+      "llm_recommendation": "HOLD"
+    }
+  ],
+  "execution_results": {
+    "executed_trades": [],
+    "failed_trades": [],
+    "skipped_trades": [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "TSLA",
+      "NVDA",
+      "META",
+      "NFLX",
+      "ORCL",
+      "CRM",
+      "AMD",
+      "INTC",
+      "QCOM",
+      "AVGO",
+      "TXN",
+      "MU",
+      "JPM",
+      "BAC",
+      "WFC",
+      "GS",
+      "MS",
+      "C",
+      "USB",
+      "PNC",
+      "JNJ",
+      "PFE",
+      "UNH",
+      "CVS",
+      "ABBV",
+      "LLY",
+      "BMY",
+      "GILD"
+    ]
+  }
+}

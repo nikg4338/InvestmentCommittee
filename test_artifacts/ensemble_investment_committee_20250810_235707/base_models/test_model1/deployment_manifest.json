@@ -1,0 +1,13 @@
+{
+  "artifact_version": "1.0",
+  "model_name": "test_model1",
+  "version": "ensemble_member",
+  "files": {
+    "model": "model.joblib",
+    "metadata": "metadata.json",
+    "calibrator": null,
+    "threshold": "threshold.json"
+  },
+  "deployment_ready": true,
+  "created_at": "2025-08-10T23:57:07.378957"
+}

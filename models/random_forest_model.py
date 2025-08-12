@@ -27,7 +27,7 @@ import os
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
-from .base_model import BaseModel
+from .base_model import BaseModel, clean_data_for_model_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,9 @@ class RandomForestModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict(X_clean)
         except Exception as e:
             self.log(f"Error during prediction: {e}")
             raise
@@ -160,7 +162,9 @@ class RandomForestModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict_proba(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict_proba(X_clean)
         except Exception as e:
             self.log(f"Error during probability prediction: {e}")
             raise

@@ -1,0 +1,75 @@
+{
+  "session_start": "2025-08-12T15:38:46.240964",
+  "session_duration": 30.02992343902588,
+  "symbols_processed": 5,
+  "signals_generated": 5,
+  "high_confidence_signals": 5,
+  "buy_signals": 0,
+  "sell_signals": 5,
+  "trades_executed": 0,
+  "trades_failed": 0,
+  "market_context": {
+    "sentiment": "NEUTRAL",
+    "spy_change": 0.003112307620482378,
+    "vix_level": 20.0
+  },
+  "top_signals": [
+    {
+      "symbol": "AAPL",
+      "action": "SELL",
+      "strength": 0.029718051636876578,
+      "confidence": 0.8819069915918912,
+      "llm_recommendation": "BUY"
+    },
+    {
+      "symbol": "MSFT",
+      "action": "SELL",
+      "strength": 0.023628256053105933,
+      "confidence": 0.895867861443921,
+      "llm_recommendation": "BUY"
+    },
+    {
+      "symbol": "GOOGL",
+      "action": "SELL",
+      "strength": 0.02407538965518874,
+      "confidence": 0.8953412810675698,
+      "llm_recommendation": "BUY"
+    },
+    {
+      "symbol": "NVDA",
+      "action": "SELL",
+      "strength": 0.023916168361709927,
+      "confidence": 0.8955208797298925,
+      "llm_recommendation": "BUY"
+    },
+    {
+      "symbol": "TSLA",
+      "action": "SELL",
+      "strength": 0.029759506957057615,
+      "confidence": 0.8818430713229339,
+      "llm_recommendation": "BUY"
+    }
+  ],
+  "execution_results": {
+    "executed_trades": [],
+    "failed_trades": [],
+    "portfolio_summary": {
+      "total_positions": 0,
+      "total_value": 100000.0,
+      "buying_power": 200000.0,
+      "realized_pnl": 0.0,
+      "unrealized_pnl": 0.0,
+      "total_pnl": 0.0,
+      "positions": [],
+      "open_positions_count": 0,
+      "closed_positions_count": 0,
+      "performance_metrics": {
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "profit_factor": 0.0
+      },
+      "timestamp": "2025-08-12T15:38:46.239915"
+    }
+  }
+}

@@ -31,9 +31,14 @@ def test_data_leakage_fix():
     print(f"Original data: {len(df)} samples, {df['target'].sum()} positive ({df['target'].mean()*100:.1f}%)")
     
     # Test prepare_training_data function
-    X_train, X_test, y_train, y_test = prepare_training_data(
+    data_result = prepare_training_data(
         df, feature_columns, target_column='target'
     )
+    
+    X_train = data_result['X_train']
+    X_test = data_result['X_test']
+    y_train = data_result['y_train']
+    y_test = data_result['y_test']
     
     test_positive_rate = y_test.mean() * 100
     train_positive_rate = y_train.mean() * 100

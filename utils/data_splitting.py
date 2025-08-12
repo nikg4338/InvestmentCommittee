@@ -17,6 +17,68 @@ from config.training_config import CrossValidationConfig, get_default_config
 
 logger = logging.getLogger(__name__)
 
+def time_aware_train_test_split(X: pd.DataFrame, y: pd.Series, 
+                               test_size: float = 0.2,
+                               embargo_pct: float = 0.02,
+                               random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Time-aware train/test split with purged cross-validation approach.
+    
+    This split respects temporal structure by:
+    1. Using earlier data for training, later data for testing
+    2. Adding an embargo period between train/test to prevent leakage
+    3. Avoiding random shuffling that can break temporal dependencies
+    
+    Args:
+        X: Feature matrix (assumed to be time-ordered)
+        y: Target labels (assumed to be time-ordered)
+        test_size: Proportion of data for testing
+        embargo_pct: Percentage of data to use as embargo between train/test
+        random_state: Random seed (for reproducibility, not used in time split)
+        
+    Returns:
+        X_train, X_test, y_train, y_test with temporal structure preserved
+    """
+    n_samples = len(X)
+    test_samples = int(n_samples * test_size)
+    embargo_samples = int(n_samples * embargo_pct)
+    
+    # Calculate split indices
+    test_start = n_samples - test_samples
+    train_end = test_start - embargo_samples
+    
+    # Ensure we have enough training data
+    if train_end <= 0:
+        logger.warning(f"Embargo too large ({embargo_pct:.1%}), reducing to preserve training data")
+        embargo_samples = max(1, int((n_samples - test_samples) * 0.1))  # Max 10% embargo
+        train_end = test_start - embargo_samples
+    
+    # Create time-aware splits
+    X_train = X.iloc[:train_end].copy()
+    y_train = y.iloc[:train_end].copy()
+    X_test = X.iloc[test_start:].copy()
+    y_test = y.iloc[test_start:].copy()
+    
+    # Log split details
+    logger.info(f"⏰ Time-aware split: {len(X_train)} train, {embargo_samples} embargo, {len(X_test)} test")
+    logger.info(f"   Train period: [0, {train_end}), Test period: [{test_start}, {n_samples})")
+    logger.info(f"   Embargo: {embargo_samples} samples ({embargo_pct:.1%})")
+    
+    # Validate both classes are present
+    train_classes = set(y_train.unique())
+    test_classes = set(y_test.unique())
+    all_classes = set(y.unique())
+    
+    if not all_classes.issubset(train_classes):
+        missing_train = all_classes - train_classes
+        logger.warning(f"⚠️ Missing classes in training data: {missing_train}")
+    
+    if not all_classes.issubset(test_classes):
+        missing_test = all_classes - test_classes
+        logger.warning(f"⚠️ Missing classes in test data: {missing_test}")
+    
+    return X_train, X_test, y_train, y_test
+
 def ensure_minority_samples(X: pd.DataFrame, y: pd.Series, 
                           min_samples: int = 2,
                           noise_factor: float = 0.01) -> Tuple[pd.DataFrame, pd.Series]:

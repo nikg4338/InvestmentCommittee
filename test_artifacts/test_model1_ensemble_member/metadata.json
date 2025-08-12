@@ -1,0 +1,20 @@
+{
+  "model_name": "test_model1",
+  "version": "ensemble_member",
+  "timestamp": "2025-08-10T23:57:07.377149",
+  "model_type": "LogisticRegression",
+  "has_calibrator": false,
+  "has_threshold": true,
+  "feature_count": 4,
+  "categorical_count": 2,
+  "feature_names": [
+    "numeric_feat1",
+    "numeric_feat2",
+    "category_A",
+    "category_B"
+  ],
+  "categorical_features": [
+    "category_A",
+    "category_B"
+  ]
+}

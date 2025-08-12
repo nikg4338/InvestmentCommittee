@@ -26,7 +26,7 @@ import os
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, precision_recall_curve, f1_score
 
-from .base_model import BaseModel
+from .base_model import BaseModel, clean_data_for_model_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,11 @@ class RandomForestRegressorModel(BaseModel):
             find_optimal_threshold: Whether to find optimal threshold for binary decisions
         """
         try:
+            # Clean data for training (remove categorical columns)
+            X_train = clean_data_for_model_prediction(X_train)
+            if X_val is not None:
+                X_val = clean_data_for_model_prediction(X_val)
+            
             # Remove NaN values
             train_mask = ~(X_train.isna().any(axis=1) | y_train.isna())
             X_train_clean = X_train[train_mask]
@@ -272,6 +277,9 @@ class RandomForestRegressorModel(BaseModel):
             raise ValueError("Model not trained")
         
         try:
+            # Clean data for prediction
+            X = clean_data_for_model_prediction(X)
+            
             # Get regression predictions
             reg_predictions = self.model.predict(X)
             

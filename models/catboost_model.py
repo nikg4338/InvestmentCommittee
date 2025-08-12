@@ -33,7 +33,7 @@ except ImportError:
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
-from .base_model import BaseModel
+from .base_model import BaseModel, clean_data_for_model_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class CatBoostModel(BaseModel):
             'random_seed': random_seed,
             'logging_level': logging_level,
             'loss_function': 'Logloss',
-            'eval_metric': 'F1',  # Updated eval_metric for F1 score
+            'eval_metric': 'PRAUC',  # PR-AUC for imbalanced classification
             'auto_class_weights': 'Balanced',  # Handle class imbalance
             **kwargs
         }
@@ -192,7 +192,9 @@ class CatBoostModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict(X_clean)
         except Exception as e:
             self.log(f"Error during prediction: {e}")
             raise
@@ -216,7 +218,9 @@ class CatBoostModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict_proba(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict_proba(X_clean)
         except Exception as e:
             self.log(f"Error during probability prediction: {e}")
             raise

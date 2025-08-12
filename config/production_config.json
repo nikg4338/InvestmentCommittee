@@ -1,0 +1,92 @@
+{
+  "model_config": {
+    "primary_model_path": "models/production/optimized_catboost.pkl",
+    "backup_models": {
+      "random_forest": "models/production/random_forest.pkl",
+      "svm": "models/production/svm.pkl"
+    },
+    "model_thresholds": {
+      "optimized_catboost": 0.6,
+      "random_forest": 0.55,
+      "svm": 0.5
+    },
+    "model_weights": {
+      "optimized_catboost": 0.5,
+      "random_forest": 0.3,
+      "svm": 0.2
+    },
+    "feature_columns": [
+      "price_change_1d",
+      "price_change_5d",
+      "price_change_10d",
+      "price_change_20d",
+      "price_vs_sma5",
+      "price_vs_sma10",
+      "price_vs_sma20",
+      "volatility_5d",
+      "volatility_10d",
+      "volatility_20d",
+      "volume_ratio",
+      "hl_ratio",
+      "hl_ratio_5d",
+      "rsi_14",
+      "macd",
+      "macd_signal",
+      "macd_histogram",
+      "bb_position"
+    ]
+  },
+  "llm_config": {
+    "model_name": "gemini-1.5-flash",
+    "enable_llm": true,
+    "confidence_threshold": 0.7,
+    "enable_meta_model": true,
+    "llm_weight": 0.3
+  },
+  "trading_config": {
+    "portfolio_size": 20,
+    "max_position_size": 0.1,
+    "min_position_size": 0.01,
+    "trading_universe": [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "TSLA",
+      "NVDA",
+      "META",
+      "NFLX",
+      "ORCL",
+      "CRM",
+      "AMD",
+      "INTC",
+      "QCOM",
+      "AVGO",
+      "TXN",
+      "MU",
+      "JPM",
+      "BAC",
+      "WFC",
+      "GS",
+      "MS",
+      "C",
+      "USB",
+      "PNC",
+      "JNJ",
+      "PFE",
+      "UNH",
+      "CVS",
+      "ABBV",
+      "LLY",
+      "BMY",
+      "GILD"
+    ],
+    "min_signal_confidence": 0.6,
+    "paper_trading": true
+  },
+  "system_settings": {
+    "environment": "paper",
+    "log_level": "INFO",
+    "enable_performance_tracking": true
+  }
+}

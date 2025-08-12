@@ -398,4 +398,75 @@ class AlpacaClient:
             ]
         except Exception as e:
             logger.error(f"Error fetching market calendar: {e}")
-            raise 
+            raise
+
+    def get_latest_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get latest quote for a symbol.
+        
+        Args:
+            symbol (str): Symbol to get quote for
+            
+        Returns:
+            Optional[Dict[str, Any]]: Latest quote data or None
+        """
+        try:
+            quote = self.api.get_latest_quote(symbol)
+            if quote:
+                return {
+                    'symbol': symbol,
+                    'bid_price': safe_float(quote.bid_price),
+                    'ask_price': safe_float(quote.ask_price),
+                    'bid_size': safe_float(quote.bid_size),
+                    'ask_size': safe_float(quote.ask_size),
+                    'timestamp': quote.timestamp
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching quote for {symbol}: {e}")
+            return None
+
+    def get_bars(self, symbol: str, start: str, end: str, timeframe: str = '1Day') -> List[Dict[str, Any]]:
+        """
+        Get historical bars for a symbol.
+        
+        Args:
+            symbol (str): Symbol to get bars for
+            start (str): Start date (YYYY-MM-DD)
+            end (str): End date (YYYY-MM-DD)
+            timeframe (str): Timeframe ('1Day', '1Hour', etc.)
+            
+        Returns:
+            List[Dict[str, Any]]: List of bar data
+        """
+        try:
+            # Map timeframe string to Alpaca TimeFrame
+            if timeframe == '1Day':
+                tf = TimeFrame.Day
+            elif timeframe == '1Hour':
+                tf = TimeFrame.Hour
+            elif timeframe == '1Min':
+                tf = TimeFrame.Minute
+            else:
+                tf = TimeFrame.Day  # Default
+            
+            bars = self.api.get_bars(symbol, tf, start=start, end=end, asof=None, feed='iex')
+            
+            result = []
+            for bar in bars:
+                result.append({
+                    'timestamp': str(bar.timestamp) if hasattr(bar, 'timestamp') else bar.t,
+                    'open': safe_float(bar.open if hasattr(bar, 'open') else bar.o),
+                    'high': safe_float(bar.high if hasattr(bar, 'high') else bar.h),
+                    'low': safe_float(bar.low if hasattr(bar, 'low') else bar.l),
+                    'close': safe_float(bar.close if hasattr(bar, 'close') else bar.c),
+                    'volume': safe_float(bar.volume if hasattr(bar, 'volume') else bar.v),
+                    'trade_count': safe_float(getattr(bar, 'trade_count', getattr(bar, 'n', 0))),
+                    'vwap': safe_float(getattr(bar, 'vwap', getattr(bar, 'vw', 0)))
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching bars for {symbol}: {e}")
+            return [] 

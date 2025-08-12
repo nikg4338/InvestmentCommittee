@@ -88,38 +88,28 @@ def get_model_predictions_safe(model, X: pd.DataFrame, model_name: str = ""):
         is_reg = is_regressor_model(model_name)
         is_q = is_quantile_model(model_name)
 
-        # Ensure DataFrame has correct dtypes for LightGBM models
-        if 'lightgbm' in model_name.lower() and isinstance(X, pd.DataFrame):
-            X_clean = X.copy()
-            for col in X_clean.columns:
-                if X_clean[col].dtype == 'object':
-                    try:
-                        X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
-                    except:
-                        pass
-                if X_clean[col].dtype not in ['int64', 'int32', 'float64', 'float32', 'bool']:
-                    X_clean[col] = X_clean[col].astype('float64')
-            X = X_clean
+        # Apply the same data cleaning used during training
+        X_clean = _ensure_numeric_df(X)
 
         if is_q:
-            preds = model.predict(X)
+            preds = model.predict(X_clean)
             return preds if isinstance(preds, dict) else {0.5: np.asarray(preds).ravel()}
 
         if is_reg:
-            return np.asarray(model.predict(X)).ravel()
+            return np.asarray(model.predict(X_clean)).ravel()
 
         # classifier path
         if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X)
+            proba = model.predict_proba(X_clean)
             return proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.asarray(proba).ravel()
 
         if hasattr(model, "decision_function"):
-            scores = np.asarray(model.decision_function(X)).ravel()
+            scores = np.asarray(model.decision_function(X_clean)).ravel()
             return 1.0 / (1.0 + np.exp(-scores))  # Platt-like mapping
 
         # last resort
         logger.warning(f"{model_name}: using hard labels because no proba/decision_function is available.")
-        return np.asarray(model.predict(X)).astype(float).ravel()
+        return np.asarray(model.predict(X_clean)).astype(float).ravel()
 
     except Exception as e:
         logger.warning(f"Error getting predictions from {model_name}: {e}")
@@ -529,11 +519,8 @@ def create_ensemble_predictions(trained_models: Dict[str, Any],
     base_predictions = {}
     
     for model_name, model_data in trained_models.items():
-        if 'test_predictions' in model_data:
-            # Use pre-computed test predictions
-            base_predictions[model_name] = model_data['test_predictions']
-        elif 'models' in model_data:
-            # Average predictions from fold models
+        if 'models' in model_data:
+            # Average predictions from fold models (preferred for OOF)
             fold_predictions = []
             for fold_model in model_data['models']:
                 try:
@@ -545,9 +532,20 @@ def create_ensemble_predictions(trained_models: Dict[str, Any],
             
             if fold_predictions:
                 base_predictions[model_name] = np.mean(fold_predictions, axis=0)
+                logger.info(f"✓ {model_name} predictions from {len(fold_predictions)} fold models")
             else:
                 logger.warning(f"No valid predictions for {model_name}")
         elif 'model' in model_data:
+            # Single model prediction
+            try:
+                test_predictions = get_model_predictions_safe(model_data['model'], X_test, model_name)
+                base_predictions[model_name] = test_predictions
+            except Exception as e:
+                logger.warning(f"Prediction failed for {model_name}: {e}")
+        elif 'test_predictions' in model_data:
+            # Use pre-computed test predictions as fallback only
+            base_predictions[model_name] = model_data['test_predictions']
+            logger.warning(f"⚠️ Using pre-computed predictions for {model_name}")
             # Single model prediction
             try:
                 test_predictions = get_model_predictions_safe(model_data['model'], X_test, model_name)

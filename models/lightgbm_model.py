@@ -33,7 +33,7 @@ except ImportError:
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
-from .base_model import BaseModel
+from .base_model import BaseModel, clean_data_for_model_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -130,18 +130,34 @@ class LightGBMModel(BaseModel):
         try:
             self.log("Starting LightGBM training...")
             
-            # Prepare evaluation set for early stopping
+            # Prepare evaluation set and early stopping for early stopping
             eval_set = None
+            callbacks = []
             if X_val is not None and y_val is not None:
                 eval_set = [(X_val, y_val)]
+                # Add early stopping with PR-AUC monitoring
+                callbacks = [
+                    lgb.early_stopping(stopping_rounds=10),
+                    lgb.log_evaluation(period=0)  # Silent logging
+                ]
             
-            # Fit the model with minimal parameters to ensure compatibility
+            # Fit the model with early stopping if validation data is available
             try:
-                # Try with basic parameters first
-                if eval_set:
+                if eval_set and callbacks:
+                    self.model.fit(
+                        X_train, y_train, 
+                        eval_set=eval_set,
+                        eval_metric='average_precision',  # PR-AUC for imbalanced data
+                        callbacks=callbacks
+                    )
+                    self.log("LightGBM training with early stopping (PR-AUC monitoring)")
+                elif eval_set:
+                    # Fallback without callbacks
                     self.model.fit(X_train, y_train, eval_set=eval_set)
+                    self.log("LightGBM training with eval set (no early stopping)")
                 else:
                     self.model.fit(X_train, y_train)
+                    self.log("LightGBM training without validation")
             except TypeError as e:
                 # If that fails, try with just the basic training data
                 self.log(f"Warning: Advanced fit parameters not supported: {e}")
@@ -163,11 +179,18 @@ class LightGBMModel(BaseModel):
             self.is_trained = False
             raise
 
-    def fit(self, X, y, **kwargs) -> None:
+    def fit(self, X, y, X_val=None, y_val=None, **kwargs) -> None:
         """
         Fit method for BaseModel compatibility.
+        
+        Args:
+            X: Training features
+            y: Training targets
+            X_val: Validation features (optional)
+            y_val: Validation targets (optional)
+            **kwargs: Additional arguments passed to train
         """
-        self.train(X, y)
+        self.train(X, y, X_val, y_val, **kwargs)
 
     def predict(self, X, **kwargs):
         """
@@ -187,7 +210,9 @@ class LightGBMModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict(X_clean)
         except Exception as e:
             self.log(f"Error during prediction: {e}")
             raise
@@ -211,7 +236,9 @@ class LightGBMModel(BaseModel):
             raise Exception("Model must be trained before predictions can be made.")
         
         try:
-            return self.model.predict_proba(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            return self.model.predict_proba(X_clean)
         except Exception as e:
             self.log(f"Error during probability prediction: {e}")
             raise

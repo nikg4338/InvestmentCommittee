@@ -1,0 +1,18 @@
+{
+  "creation_timestamp": "2025-08-11T14:46:31.480318",
+  "optimization_results": {
+    "best_model_type": "catboost",
+    "best_score": 0.9782608695652174,
+    "best_params": {
+      "model_type": "catboost",
+      "iterations": 424,
+      "depth": 6,
+      "learning_rate": 0.03832491306185132
+    },
+    "n_trials": 30
+  },
+  "model_thresholds": {
+    "optimized_catboost": {
+      "threshold": 0.5,
+      "score": 0.0,
+      "portfolio_size": 

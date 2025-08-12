@@ -1,50 +1,53 @@
 {
-  "timestamp": "2025-08-09T15:02:51",
+  "timestamp": "2025-08-11T13:41:58",
   "batch_id": "5",
   "gate_threshold": 0.05,
   "gate": "PASS",
-  "pr_auc_meta": 0.6398939850680073,
-  "meta_model_pr_auc_reported": 0.6398939850680073,
+  "pr_auc_meta": 0.2617182544418836,
+  "meta_model_pr_auc_reported": 0.2617182544418836,
   "dynamic_weights": {
-    "xgboost": 0.16882624898171675,
-    "lightgbm": 0.19567968646643535,
-    "lightgbm_regressor": 0.23010431246157112,
-    "catboost": 0.21311707840602626,
-    "random_forest": 0.1922723585721876,
-    "svm": 3.151120627980503e-07
+    "xgboost": 0.1973274291416774,
+    "lightgbm": 0.19782569994250118,
+    "lightgbm_regressor": 0.19772176665980873,
+    "catboost": 0.20538381598839722,
+    "random_forest": 0.2017412882676155
   },
   "base_model_performance": {
     "xgboost": {
-      "pr_auc": 0.45104134953863384,
-      "roc_auc": 0.7334559999999999
+      "pr_auc": 0.2774194492242483,
+      "roc_auc": 0.602222002765159
     },
     "lightgbm": {
-      "pr_auc": 0.5427069079956313,
-      "roc_auc": 0.8036319999999999
+      "pr_auc": 0.27745117074935816,
+      "roc_auc": 0.6053031799328461
     },
     "catboost": {
-      "pr_auc": 0.6007770699359122,
-      "roc_auc": 0.852592
+      "pr_auc": 0.2943609094550804,
+      "roc_auc": 0.6137072881690697
     },
     "random_forest": {
-      "pr_auc": 0.5309385263553246,
-      "roc_auc": 0.795048
+      "pr_auc": 0.2841878785681413,
+      "roc_auc": 0.61437882678254
     },
     "lightgbm_regressor": {
-      "pr_auc": 0.6713435684062661,
-      "roc_auc": 0.867632
+      "pr_auc": 0.27711197548675154,
+      "roc_auc": 0.6054365000987557
     },
     "xgboost_regressor": {
-      "pr_auc": 0.5582262777243204,
-      "roc_auc": 0.7712960000000001
+      "pr_auc": 0.23212834147333083,
+      "roc_auc": 0.5251333201659096
+    },
+    "catboost_regressor": {
+      "pr_auc": 0.24493186330414662,
+      "roc_auc": 0.5681512936993875
     },
     "random_forest_regressor": {
-      "pr_auc": 0.6490710570039993,
-      "roc_auc": 0.8796840000000001
+      "pr_auc": 0.2735257492645989,
+      "roc_auc": 0.6203041674896306
     },
     "svm_regressor": {
-      "pr_auc": 0.3638879554522231,
-      "roc_auc": 0.659728
+      "pr_auc": 0.20892666262240656,
+      "roc_auc": 0.5036737112383962
     }
   }
 }

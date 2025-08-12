@@ -1,0 +1,24 @@
+{
+  "ensemble_name": "investment_committee",
+  "version": "20250810_235707",
+  "timestamp": "2025-08-10T23:57:07.388792",
+  "models": [
+    "test_model1",
+    "test_model2"
+  ],
+  "ensemble_weights": {},
+  "has_meta_model": false,
+  "feature_info": {
+    "feature_names": [
+      "numeric_feat1",
+      "numeric_feat2",
+      "category_A",
+      "category_B"
+    ],
+    "categorical_features": [
+      "category_A",
+      "category_B"
+    ]
+  },
+  "deployment_ready": true
+}

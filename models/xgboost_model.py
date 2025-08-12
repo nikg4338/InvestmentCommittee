@@ -19,6 +19,8 @@ except ImportError:
     XGBOOST_AVAILABLE = False
     print("Warning: xgboost not available. Using dummy logic.")
 
+from .base_model import clean_data_for_model_prediction
+
 logger = logging.getLogger(__name__)
 
 class XGBoostModel:
@@ -49,10 +51,31 @@ class XGBoostModel:
             logger.warning("xgboost not available. Model will return dummy outputs.")
 
         self.is_trained = False
+    
+    def get_params(self, deep=True):
+        """Get parameters for sklearn compatibility (for calibration)."""
+        if deep and self.model is not None:
+            return self.model.get_params(deep=deep)
+        return self.model_params.copy()
+    
+    def set_params(self, **params):
+        """Set parameters for sklearn compatibility (for calibration)."""
+        if self.model is not None:
+            self.model.set_params(**params)
+        self.model_params.update(params)
+        return self
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
+    def fit(self, X: pd.DataFrame, y: pd.Series, 
+            X_val: Optional[pd.DataFrame] = None, 
+            y_val: Optional[pd.Series] = None) -> None:
         """
-        Train XGBoost model.
+        Train XGBoost model with early stopping and PR-AUC monitoring.
+        
+        Args:
+            X: Training features
+            y: Training labels
+            X_val: Validation features (for early stopping)
+            y_val: Validation labels (for early stopping)
         """
         if not XGBOOST_AVAILABLE or self.model is None:
             logger.warning("xgboost not available. Training skipped.")
@@ -69,7 +92,14 @@ class XGBoostModel:
         # Update model with scale_pos_weight
         self.model.set_params(scale_pos_weight=scale_pos_weight, base_score=0.5)
         
-        self.model.fit(X, y)
+        # Add validation monitoring if validation data is provided
+        fit_params = {}
+        if X_val is not None and y_val is not None:
+            fit_params['eval_set'] = [(X_val, y_val)]
+            fit_params['verbose'] = False
+            logger.info("XGBoost training with validation monitoring")
+        
+        self.model.fit(X, y, **fit_params)
         self.is_trained = True
         logger.info(f"XGBoost model trained with scale_pos_weight={scale_pos_weight:.2f}")
     
@@ -86,7 +116,10 @@ class XGBoostModel:
         if not XGBOOST_AVAILABLE or self.model is None:
             logger.warning("xgboost not available. Returning zeros.")
             return np.zeros(len(X))
-        return self.model.predict(X)
+        
+        # Clean data before prediction
+        X_clean = clean_data_for_model_prediction(X)
+        return self.model.predict(X_clean)
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
@@ -105,7 +138,9 @@ class XGBoostModel:
             return np.column_stack([np.full(n_samples, 0.5), np.full(n_samples, 0.5)])
         
         try:
-            probabilities = self.model.predict_proba(X)
+            # Clean data before prediction
+            X_clean = clean_data_for_model_prediction(X)
+            probabilities = self.model.predict_proba(X_clean)
             return probabilities
         except Exception as e:
             logger.error(f"Error in predict_proba: {e}")
@@ -123,17 +158,23 @@ class XGBoostModel:
 
         try:
             X = pd.DataFrame([features])
-            pred = self.model.predict(X)[0]
-            # Simple interpretation: >0 bullish, <0 bearish, ~0 neutral
-            if pred > 0.02:
+            # Use predict_proba to get probability of positive class
+            p = self.model.predict_proba(X)[0, 1]
+            
+            # Interpret based on probability thresholds
+            if p > 0.52:  # Above neutral (52% confidence for bullish)
                 signal = 'BULLISH'
-            elif pred < -0.02:
+            elif p < 0.48:  # Below neutral (48% confidence for bearish)
                 signal = 'BEARISH'
             else:
                 signal = 'NEUTRAL'
-            confidence = float(np.clip(abs(pred) * 10, 0, 1))  # scale confidence
+            
+            # Confidence is distance from neutral (0.5)
+            confidence = float(np.clip(abs(p - 0.5) * 2, 0, 1))
+            
             metadata = {
-                "raw_prediction": float(pred),
+                "probability": float(p),
+                "raw_prediction": float(p),
                 "features": features
             }
             return signal, confidence, metadata

@@ -7,20 +7,85 @@ Defines common interface for fit, predict, save, load, and metadata.
 
 import abc
 import logging
+import numpy as np
+import pandas as pd
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+def clean_data_for_model_prediction(X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean data for model prediction by handling categorical and non-numeric columns.
+    This ensures consistent data preprocessing across all model wrappers.
+    
+    Args:
+        X: Input DataFrame
+        
+    Returns:
+        Cleaned DataFrame with only numeric columns
+    """
+    if not isinstance(X, pd.DataFrame):
+        return X
+    
+    Xn = X.copy()
+    drop_cols = []
+    
+    # Process each column
+    for c in Xn.columns:
+        if Xn[c].dtype == 'object':
+            # Try to convert object columns to numeric
+            coerced = pd.to_numeric(Xn[c], errors='coerce')
+            if coerced.notna().sum() == 0:
+                # If no values can be converted, drop the column
+                drop_cols.append(c)
+            else:
+                Xn[c] = coerced
+        elif Xn[c].dtype.name not in ['int64', 'int32', 'float64', 'float32', 'bool']:
+            # Convert other non-standard types to numeric
+            Xn[c] = pd.to_numeric(Xn[c], errors='coerce')
+    
+    # Drop non-convertible columns
+    if drop_cols:
+        logger.debug(f"Dropping non-numeric columns for model prediction: {drop_cols}")
+        Xn = Xn.drop(columns=drop_cols, errors='ignore')
+    
+    # Handle infinite values
+    Xn = Xn.replace([np.inf, -np.inf], np.nan)
+    
+    # Fill NaN values with median for numeric columns
+    if not Xn.empty:
+        Xn = Xn.apply(lambda s: s.fillna(s.median()) if s.dtype.kind in 'fc' else s)
+    
+    return Xn
 
 class BaseModel(abc.ABC):
     """
     Abstract base class for all committee models (XGBoost, MLP, LSTM, etc.).
     Provides standard interface for training, prediction, saving/loading, and metadata.
+    Includes sklearn compatibility for calibration support.
     """
 
     def __init__(self, name: str = "BaseModel"):
         self.name = name
         self.is_trained = False
         self.metadata: Dict[str, Any] = {}
+
+    def get_params(self, deep=True):
+        """Get parameters for sklearn compatibility (enables calibration)."""
+        # Return any parameters stored in self.params if available
+        if hasattr(self, 'params'):
+            return self.params.copy() if deep else self.params
+        # Return basic model metadata
+        return self.metadata.copy()
+    
+    def set_params(self, **params):
+        """Set parameters for sklearn compatibility (enables calibration)."""
+        # Update params if available
+        if hasattr(self, 'params'):
+            self.params.update(params)
+        # Also update metadata
+        self.metadata.update(params)
+        return self
 
     @abc.abstractmethod
     def fit(self, X, y, **kwargs) -> None:

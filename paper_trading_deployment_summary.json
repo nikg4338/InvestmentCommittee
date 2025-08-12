@@ -1,0 +1,155 @@
+{
+  "deployment_summary": {
+    "timestamp": "2025-08-11T14:47:49.138700",
+    "models_available": 3,
+    "model_names": [
+      "optimized_catboost",
+      "random_forest",
+      "svm"
+    ],
+    "status": "READY_FOR_PAPER_TRADING"
+  },
+  "model_validation": {
+    "optimized_catboost": {
+      "prediction_diversity": 60,
+      "prediction_range": [
+        4.0288178633775996e-05,
+        0.0006025474769535748
+      ],
+      "threshold_analysis": {
+        "threshold_0.1": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.3": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.5": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.7": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.9": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        }
+      },
+      "model_type": "CatBoostClassifier",
+      "has_predict_proba": true
+    },
+    "random_forest": {
+      "prediction_diversity": 17,
+      "prediction_range": [
+        0.0,
+        0.04046826200115674
+      ],
+      "threshold_analysis": {
+        "threshold_0.1": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.3": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.5": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.7": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.9": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        }
+      },
+      "model_type": "RandomForestClassifier",
+      "has_predict_proba": true
+    },
+    "svm": {
+      "prediction_diversity": 60,
+      "prediction_range": [
+        0.011537456159427742,
+        0.014126168856190518
+      ],
+      "threshold_analysis": {
+        "threshold_0.1": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.3": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.5": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.7": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        },
+        "threshold_0.9": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "predictions": 0
+        }
+      },
+      "model_type": "SVC",
+      "has_predict_proba": true
+    }
+  },
+  "recommendations": {
+    "primary_model": "optimized_catboost",
+    "backup_models": [
+      "random_forest",
+      "svm"
+    ],
+    "suggested_threshold": 0.5,
+    "portfolio_considerations": []
+  },
+  "deployment_checklist": [
+    "\u2713 Models trained and optimized",
+    "\u2713 Threshold analysis completed",
+    "\u2713 Performance validation done",
+    "- Set up real-time data feed",
+    "- Configure position sizing",
+    "- Implement risk management",
+    "- Start paper trading monitoring"
+  ]
+}

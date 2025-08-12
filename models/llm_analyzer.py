@@ -135,7 +135,7 @@ class RateLimiter:
 class GeminiAnalyzer:
     """Gemini API client for investment analysis"""
     
-    def __init__(self, model_name: str = "gemini-1.5-flash"):
+    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
         """Initialize Gemini analyzer"""
         if not GOOGLE_AI_AVAILABLE:
             raise ImportError("Google AI packages not available. Please install with: pip install google-generativeai")

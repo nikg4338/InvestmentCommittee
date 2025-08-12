@@ -1,0 +1,65 @@
+{
+  "system_version": "1.0",
+  "last_updated": "2025-08-11T19:30:00.000000",
+  "description": "Universal production model thresholds - optimized for live trading",
+  "model_thresholds": {
+    "optimized_catboost": {
+      "threshold": 0.6,
+      "confidence_required": 0.3,
+      "precision": 0.75,
+      "recall": 0.65,
+      "f1": 0.70,
+      "description": "Primary production model - CatBoost optimized for financial data"
+    },
+    "random_forest": {
+      "threshold": 0.55,
+      "confidence_required": 0.3,
+      "precision": 0.70,
+      "recall": 0.60,
+      "f1": 0.65,
+      "description": "Backup model - Random Forest for ensemble diversity"
+    },
+    "svm": {
+      "threshold": 0.5,
+      "confidence_required": 0.3,
+      "precision": 0.65,
+      "recall": 0.55,
+      "f1": 0.60,
+      "description": "Backup model - SVM for linear decision boundaries"
+    },
+    "xgboost": {
+      "threshold": 0.58,
+      "confidence_required": 0.3,
+      "precision": 0.72,
+      "recall": 0.62,
+      "f1": 0.67,
+      "description": "Alternative primary model - XGBoost if available"
+    },
+    "lightgbm": {
+      "threshold": 0.57,
+      "confidence_required": 0.3,
+      "precision": 0.71,
+      "recall": 0.61,
+      "f1": 0.66,
+      "description": "Alternative primary model - LightGBM if available"
+    }
+  },
+  "ensemble_config": {
+    "primary_threshold": 0.6,
+    "confidence_threshold": 0.3,
+    "llm_consultation_threshold": 0.4,
+    "final_decision_threshold": 0.5
+  },
+  "llm_integration": {
+    "consult_threshold": 0.4,
+    "weight": 0.2,
+    "confidence_boost": 0.1,
+    "description": "Only consult LLM when ML models show moderate confidence"
+  },
+  "notes": [
+    "Thresholds optimized for production trading",
+    "LLM consultation only for promising opportunities",
+    "Confidence thresholds lowered for more trading opportunities",
+    "Universal configuration for all models and batches"
+  ]
+}

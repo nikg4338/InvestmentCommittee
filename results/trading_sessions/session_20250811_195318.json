@@ -1,0 +1,48 @@
+{
+  "session_start": "2025-08-11T19:53:18.872928",
+  "session_duration": 16.409795999526978,
+  "symbols_processed": 3,
+  "signals_generated": 3,
+  "high_confidence_signals": 3,
+  "buy_signals": 0,
+  "sell_signals": 3,
+  "trades_executed": 0,
+  "trades_failed": 0,
+  "market_context": {
+    "sentiment": "NEUTRAL",
+    "spy_change": 0.3707033899641952,
+    "vix_level": 20.0
+  },
+  "top_signals": [
+    {
+      "symbol": "AAPL",
+      "action": "SELL",
+      "strength": 0.029212653681062004,
+      "confidence": 0.882503681901978,
+      "llm_recommendation": "BUY"
+    },
+    {
+      "symbol": "MSFT",
+      "action": "SELL",
+      "strength": 0.023502112853848886,
+      "confidence": 0.9460164738206489,
+      "llm_recommendation": "HOLD"
+    },
+    {
+      "symbol": "GOOGL",
+      "action": "SELL",
+      "strength": 0.023643118526792416,
+      "confidence": 0.8958540249601528,
+      "llm_recommendation": "BUY"
+    }
+  ],
+  "execution_results": {
+    "executed_trades": [],
+    "failed_trades": [],
+    "skipped_trades": [
+      "AAPL",
+      "MSFT",
+      "GOOGL"
+    ]
+  }
+}

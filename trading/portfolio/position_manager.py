@@ -108,6 +108,166 @@ class PositionManager:
               if not closed_df.empty else "None")
         print(f"\nTotal Realized P&L: {closed_df['pnl'].sum():.2f}" if not closed_df.empty else "")
 
+    def get_current_positions(self) -> Dict[str, Dict]:
+        """
+        Get current positions as a dictionary keyed by symbol.
+        Prioritizes real Alpaca portfolio data over internal tracking.
+        
+        Returns:
+            Dict mapping symbol -> position details
+        """
+        try:
+            position_dict = {}
+            
+            # First, get real positions from Alpaca broker
+            if self.alpaca:
+                try:
+                    broker_positions = self.alpaca.get_positions()
+                    for pos in broker_positions:
+                        symbol = pos.get('symbol', '')
+                        if symbol and abs(float(pos.get('qty', 0))) > 0:  # Only include positions with actual shares
+                            position_dict[symbol] = pos
+                    
+                    if position_dict:
+                        logger.info(f"Found {len(position_dict)} real positions from Alpaca: {list(position_dict.keys())}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch broker positions: {e}")
+            
+            # Supplement with internal tracking for any missing positions
+            for pos in self.open_positions:
+                symbol = pos.get('symbol', '')
+                if symbol and symbol not in position_dict:
+                    # Only add if we don't already have real broker data for this symbol
+                    position_dict[symbol] = pos
+            
+            return position_dict
+            
+        except Exception as e:
+            logger.error(f"Error getting current positions: {e}")
+            return {}
+
+    def execute_trade(self, symbol: str, action: str, position_size: float, signal_metadata: Dict = None) -> bool:
+        """
+        Execute a trade through the Alpaca broker.
+        
+        Args:
+            symbol: Trading symbol
+            action: 'BUY' or 'SELL'
+            position_size: Position size (as percentage of portfolio)
+            signal_metadata: Additional signal information
+            
+        Returns:
+            bool: True if trade executed successfully
+        """
+        try:
+            if not self.alpaca:
+                logger.error("No Alpaca client available for trade execution")
+                return False
+            
+            logger.info(f"Executing {action} trade for {symbol} (size: {position_size:.2%})")
+            
+            # Get account info to calculate position sizing
+            account_info = self.alpaca.get_account_info()
+            account_value = account_info.get('portfolio_value', 100000)
+            buying_power = account_info.get('buying_power', account_value)
+            
+            logger.info(f"Account value: ${account_value:,.2f}, Buying power: ${buying_power:,.2f}")
+            
+            if action == "BUY":
+                # Calculate shares based on portfolio percentage and current buying power
+                target_value = min(account_value * position_size, buying_power * 0.95)  # Use 95% of buying power max
+                
+                # Get current market price
+                try:
+                    quote = self.alpaca.get_quote(symbol)
+                    current_price = quote.get('ask_price', quote.get('last_price', 100))
+                except Exception as e:
+                    logger.warning(f"Could not get quote for {symbol}: {e}")
+                    current_price = 100  # Fallback price
+                
+                shares = int(target_value / current_price)
+                
+                if shares > 0:
+                    # Submit market order to Alpaca
+                    try:
+                        order_response = self.alpaca.submit_order(
+                            symbol=symbol,
+                            qty=shares,
+                            side='buy',
+                            order_type='market',
+                            time_in_force='day'
+                        )
+                        
+                        logger.info(f"BUY order submitted to Alpaca: {shares} shares of {symbol} at market price")
+                        logger.info(f"Order ID: {order_response['id']}, Status: {order_response['status']}")
+                        
+                        # Add to internal tracking
+                        new_position = {
+                            'id': f"{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                            'symbol': symbol,
+                            'action': action,
+                            'shares': shares,
+                            'entry_price': current_price,
+                            'entry_time': datetime.now(),
+                            'status': 'open',
+                            'order_id': order_response['id'],
+                            'signal_metadata': signal_metadata or {}
+                        }
+                        self.add_position(new_position)
+                        
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to submit BUY order for {symbol}: {e}")
+                        return False
+                else:
+                    logger.warning(f"Calculated 0 shares for {symbol} BUY order - insufficient funds or high price")
+                    return False
+                    
+            elif action == "SELL":
+                # Get current positions from Alpaca
+                current_positions = self.get_current_positions()
+                
+                if symbol in current_positions:
+                    position = current_positions[symbol]
+                    shares_owned = abs(float(position.get('qty', 0)))
+                    
+                    if shares_owned > 0:
+                        try:
+                            # Submit market sell order to Alpaca
+                            order_response = self.alpaca.submit_order(
+                                symbol=symbol,
+                                qty=shares_owned,
+                                side='sell',
+                                order_type='market',
+                                time_in_force='day'
+                            )
+                            
+                            logger.info(f"SELL order submitted to Alpaca: {shares_owned} shares of {symbol}")
+                            logger.info(f"Order ID: {order_response['id']}, Status: {order_response['status']}")
+                            
+                            # Update internal tracking - mark position as closed
+                            for pos in self.open_positions:
+                                if pos.get('symbol') == symbol:
+                                    pos['status'] = 'closing'
+                                    pos['exit_order_id'] = order_response['id']
+                            
+                            return True
+                        except Exception as e:
+                            logger.error(f"Failed to submit SELL order for {symbol}: {e}")
+                            return False
+                    else:
+                        logger.info(f"No shares to sell for {symbol} (qty: {shares_owned})")
+                        return False
+                else:
+                    logger.info(f"No position found for {symbol} to sell")
+                    return False
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Trade execution failed for {symbol}: {e}")
+            return False
+
     def force_assign(self, position_id: str):
         """
         Mark a position as assigned (e.g., for short options assigned at expiry).
@@ -118,6 +278,120 @@ class PositionManager:
             logger.info(f"Position assigned: {position_id}")
         else:
             logger.warning(f"Tried to assign unknown position: {position_id}")
+
+    def get_portfolio_summary(self) -> Dict[str, Any]:
+        """
+        Get comprehensive portfolio summary including positions, P&L, and metrics.
+        
+        Returns:
+            Dict with portfolio summary including:
+            - total_positions: Number of open positions
+            - total_value: Total portfolio value
+            - realized_pnl: Total realized P&L from closed positions
+            - unrealized_pnl: Total unrealized P&L from open positions
+            - positions: List of current positions
+            - performance_metrics: Basic performance statistics
+        """
+        try:
+            # Get current positions from broker if available
+            broker_positions = []
+            if self.alpaca:
+                try:
+                    broker_positions = self.alpaca.get_positions()
+                except Exception as e:
+                    logger.warning(f"Could not fetch broker positions: {e}")
+            
+            # Calculate metrics
+            open_df = self.get_open_positions_df()
+            closed_df = self.get_closed_positions_df()
+            
+            total_positions = len(open_df) if not open_df.empty else 0
+            realized_pnl = closed_df['pnl'].sum() if not closed_df.empty else 0.0
+            
+            # Calculate unrealized P&L (simplified)
+            unrealized_pnl = 0.0
+            if not open_df.empty and 'pnl' in open_df.columns:
+                unrealized_pnl = open_df['pnl'].sum()
+            
+            # Get account info if available
+            account_value = 0.0
+            buying_power = 0.0
+            if self.alpaca:
+                try:
+                    account_info = self.alpaca.get_account_info()
+                    account_value = float(account_info.get('portfolio_value', 0))
+                    buying_power = float(account_info.get('buying_power', 0))
+                except Exception as e:
+                    logger.warning(f"Could not fetch account info: {e}")
+            
+            # Create summary
+            summary = {
+                'total_positions': total_positions,
+                'total_value': account_value,
+                'buying_power': buying_power,
+                'realized_pnl': realized_pnl,
+                'unrealized_pnl': unrealized_pnl,
+                'total_pnl': realized_pnl + unrealized_pnl,
+                'positions': broker_positions if broker_positions else self.open_positions,
+                'open_positions_count': len(broker_positions) if broker_positions else total_positions,
+                'closed_positions_count': len(closed_df) if not closed_df.empty else 0,
+                'performance_metrics': {
+                    'win_rate': self._calculate_win_rate(closed_df),
+                    'avg_win': self._calculate_avg_win(closed_df),
+                    'avg_loss': self._calculate_avg_loss(closed_df),
+                    'profit_factor': self._calculate_profit_factor(closed_df)
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error generating portfolio summary: {e}")
+            return {
+                'total_positions': 0,
+                'total_value': 0.0,
+                'buying_power': 0.0,
+                'realized_pnl': 0.0,
+                'unrealized_pnl': 0.0,
+                'total_pnl': 0.0,
+                'positions': [],
+                'open_positions_count': 0,
+                'closed_positions_count': 0,
+                'performance_metrics': {},
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            }
+    
+    def _calculate_win_rate(self, closed_df: pd.DataFrame) -> float:
+        """Calculate win rate from closed positions."""
+        if closed_df.empty or 'pnl' not in closed_df.columns:
+            return 0.0
+        winning_trades = (closed_df['pnl'] > 0).sum()
+        total_trades = len(closed_df)
+        return (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+    
+    def _calculate_avg_win(self, closed_df: pd.DataFrame) -> float:
+        """Calculate average winning trade."""
+        if closed_df.empty or 'pnl' not in closed_df.columns:
+            return 0.0
+        winning_trades = closed_df[closed_df['pnl'] > 0]['pnl']
+        return winning_trades.mean() if not winning_trades.empty else 0.0
+    
+    def _calculate_avg_loss(self, closed_df: pd.DataFrame) -> float:
+        """Calculate average losing trade."""
+        if closed_df.empty or 'pnl' not in closed_df.columns:
+            return 0.0
+        losing_trades = closed_df[closed_df['pnl'] < 0]['pnl']
+        return losing_trades.mean() if not losing_trades.empty else 0.0
+    
+    def _calculate_profit_factor(self, closed_df: pd.DataFrame) -> float:
+        """Calculate profit factor (gross profit / gross loss)."""
+        if closed_df.empty or 'pnl' not in closed_df.columns:
+            return 0.0
+        gross_profit = closed_df[closed_df['pnl'] > 0]['pnl'].sum()
+        gross_loss = abs(closed_df[closed_df['pnl'] < 0]['pnl'].sum())
+        return (gross_profit / gross_loss) if gross_loss > 0 else float('inf') if gross_profit > 0 else 0.0
 
 # Example usage
 if __name__ == "__main__":
