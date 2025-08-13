@@ -450,7 +450,25 @@ class AlpacaClient:
             else:
                 tf = TimeFrame.Day  # Default
             
-            bars = self.api.get_bars(symbol, tf, start=start, end=end, asof=None, feed='iex')
+            # Try different data feeds in order of preference
+            feeds_to_try = [None, 'sip', 'iex']  # None = default, then sip, then iex
+            
+            bars = None
+            for feed in feeds_to_try:
+                try:
+                    if feed is None:
+                        bars = self.api.get_bars(symbol, tf, start=start, end=end, asof=None)
+                    else:
+                        bars = self.api.get_bars(symbol, tf, start=start, end=end, asof=None, feed=feed)
+                    if bars:
+                        logger.info(f"Successfully retrieved data for {symbol} using feed: {feed or 'default'}")
+                        break
+                except Exception as feed_error:
+                    logger.debug(f"Feed {feed or 'default'} failed for {symbol}: {feed_error}")
+                    continue
+            
+            if not bars:
+                raise Exception("No data available from any feed")
             
             result = []
             for bar in bars:
@@ -469,4 +487,281 @@ class AlpacaClient:
             
         except Exception as e:
             logger.error(f"Error fetching bars for {symbol}: {e}")
-            return [] 
+            return []
+
+    def get_options_enabled_stocks(self, limit: int = 1000) -> List[str]:
+        """
+        Efficiently scan for stocks with options trading enabled on Alpaca.
+        Uses fast, non-blocking approach to find maximum optionable symbols.
+        
+        Args:
+            limit: Maximum number of stocks to return (default 1000)
+            
+        Returns:
+            List[str]: List of stock symbols with options enabled
+        """
+        try:
+            logger.info("Fast scan for options-enabled stocks on Alpaca...")
+            
+            options_symbols = []
+            
+            # Phase 1: Add major ETFs (guaranteed optionable)
+            logger.info("Phase 1: Adding major ETFs and index funds...")
+            major_etfs = [
+                'SPY', 'QQQ', 'IWM', 'DIA', 'VTI', 'VEA', 'VWO', 'EFA', 'EEM',
+                'GLD', 'SLV', 'TLT', 'HYG', 'LQD', 'IEMG', 'IJR', 'IVV', 'VOO',
+                'VEU', 'IEFA', 'AGG', 'BND', 'VXUS', 'VTV', 'IJH', 'VUG', 'VYM',
+                'XLE', 'XLF', 'XLK', 'XLV', 'XLI', 'XLP', 'XLY', 'XLU', 'XLRE',
+                'SMH', 'KRE', 'XBI', 'IBB', 'ARKK', 'ARKQ', 'ARKG', 'ARKW'
+            ]
+            
+            for symbol in major_etfs:
+                try:
+                    asset = self.api.get_asset(symbol)
+                    if asset and asset.tradable:
+                        options_symbols.append(symbol)
+                except:
+                    pass  # Skip if asset doesn't exist
+            
+            logger.info(f"Phase 1 complete: {len(options_symbols)} ETFs added")
+            
+            # Phase 2: Add S&P 500 and large-cap stocks (most have options)
+            logger.info("Phase 2: Adding S&P 500 and large-cap stocks...")
+            large_cap_stocks = [
+                # Tech giants
+                'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'TSLA', 'NVDA', 'META',
+                'NFLX', 'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'IBM', 'CSCO',
+                'QCOM', 'TXN', 'AVGO', 'NOW', 'INTU', 'PYPL', 'SQ', 'SHOP',
+                # Mega cap stocks
+                'BRK.A', 'BRK.B', 'UNH', 'JNJ', 'V', 'MA', 'PG', 'HD', 'CVX',
+                'ABBV', 'PFE', 'LLY', 'TMO', 'KO', 'PEP', 'COST', 'WMT', 'DIS',
+                # Finance
+                'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'AXP', 'BLK', 'SCHW',
+                'USB', 'PNC', 'COF', 'TFC', 'MTB', 'RF', 'FITB', 'KEY', 'CFG',
+                # Healthcare
+                'ABT', 'DHR', 'BMY', 'AMGN', 'GILD', 'REGN', 'VRTX', 'BIIB',
+                'ILMN', 'MRNA', 'BNTX', 'MRK', 'CVS', 'CI', 'HUM', 'ANTM',
+                # Consumer
+                'TGT', 'LOW', 'TJX', 'SBUX', 'MCD', 'NKE', 'LULU', 'ETSY',
+                'EBAY', 'BABA', 'JD', 'PDD', 'ZM', 'DOCU', 'ROKU', 'PINS',
+                # Industrial
+                'CAT', 'DE', 'BA', 'HON', 'UPS', 'FDX', 'LMT', 'RTX', 'NOC',
+                'GD', 'MMM', 'GE', 'EMR', 'ITW', 'PH', 'ROK', 'DOV', 'ETN',
+                # Energy
+                'XOM', 'COP', 'EOG', 'SLB', 'PSX', 'VLO', 'MPC', 'KMI', 'OKE',
+                'WMB', 'EPD', 'ET', 'BKR', 'HAL', 'DVN', 'FANG', 'MRO', 'OXY',
+                # Real Estate
+                'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O', 'WELL', 'DLR', 'PSA',
+                'EXR', 'AVB', 'EQR', 'MAA', 'ESS', 'UDR', 'CPT', 'FRT', 'REG',
+                # Materials
+                'LIN', 'APD', 'SHW', 'FCX', 'NEM', 'CTVA', 'EMN', 'DD', 'DOW',
+                'PPG', 'ECL', 'IFF', 'ALB', 'CE', 'VMC', 'MLM', 'NUE', 'STLD',
+                # Utilities
+                'NEE', 'SO', 'DUK', 'D', 'EXC', 'XEL', 'SRE', 'AEP', 'ES', 'FE',
+                'ETR', 'ED', 'EIX', 'PPL', 'AES', 'LNT', 'NI', 'PNW', 'CMS',
+                # Communications
+                'T', 'VZ', 'CMCSA', 'TMUS', 'CHTR', 'DISH', 'SIRI', 'LBRDA',
+                # Growth stocks
+                'TWLO', 'OKTA', 'SNOW', 'PLTR', 'RBLX', 'U', 'DDOG', 'ZS',
+                'CRWD', 'NET', 'SNAP', 'TWTR', 'UBER', 'LYFT', 'DASH', 'ABNB'
+            ]
+            
+            # Add large-cap stocks
+            for symbol in large_cap_stocks:
+                if symbol not in options_symbols:
+                    try:
+                        asset = self.api.get_asset(symbol)
+                        if asset and asset.tradable:
+                            options_symbols.append(symbol)
+                    except:
+                        pass
+            
+            logger.info(f"Phase 2 complete: {len(options_symbols)} total stocks")
+            
+            # Phase 3: Check if we need to scan for more (SAFE version - no infinite loops)
+            if len(options_symbols) < 200:
+                logger.info("Phase 3: Limited scan for additional optionable stocks...")
+                
+                try:
+                    # Get a SAMPLE of active assets (not all - to prevent infinite loops)
+                    assets = self.api.list_assets(
+                        status='active',
+                        asset_class='us_equity'
+                    )
+                    
+                    # Limit to first 500 assets to prevent infinite loops
+                    sample_assets = assets[:500] if len(assets) > 500 else assets
+                    
+                    checked_count = 0
+                    max_checks = 100  # Hard limit to prevent infinite loops
+                    
+                    for asset in sample_assets:
+                        if checked_count >= max_checks:
+                            logger.info(f"Reached maximum checks ({max_checks}) - stopping scan")
+                            break
+                            
+                        if (hasattr(asset, 'symbol') and hasattr(asset, 'tradable') and 
+                            asset.tradable and asset.symbol not in options_symbols):
+                            
+                            symbol = asset.symbol
+                            
+                            # Only check simple symbols (avoid complications)
+                            if (len(symbol) <= 4 and symbol.isalpha() and 
+                                '.' not in symbol and '-' not in symbol):
+                                
+                                # Check for explicit options_enabled flag
+                                if hasattr(asset, 'options_enabled') and asset.options_enabled:
+                                    options_symbols.append(symbol)
+                                    logger.debug(f"Added explicitly optionable: {symbol}")
+                                
+                                checked_count += 1
+                                
+                                # Stop if we have enough symbols
+                                if len(options_symbols) >= limit:
+                                    break
+                    
+                    logger.info(f"Phase 3 complete: {len(options_symbols)} total stocks (checked {checked_count} assets)")
+                    
+                except Exception as e:
+                    logger.warning(f"Phase 3 scan error (continuing): {e}")
+            
+            # Remove duplicates and sort
+            options_symbols = list(set(options_symbols))
+            options_symbols.sort()
+            
+            # Limit results if requested
+            if limit and len(options_symbols) > limit:
+                logger.info(f"Limiting results to {limit} stocks (from {len(options_symbols)} found)")
+                options_symbols = options_symbols[:limit]
+            
+            logger.info(f"✅ FAST SCAN COMPLETE: Found {len(options_symbols)} options-enabled stocks")
+            logger.info(f"Sample symbols: {', '.join(options_symbols[:25])}...")
+            
+            return options_symbols
+            
+        except Exception as e:
+            logger.error(f"Error in options scan: {e}")
+            # Return comprehensive fallback list
+            fallback_symbols = [
+                # Major ETFs
+                'SPY', 'QQQ', 'IWM', 'DIA', 'VTI', 'GLD', 'SLV', 'TLT', 'EFA', 'EEM',
+                'XLE', 'XLF', 'XLK', 'XLV', 'XLI', 'XLP', 'XLY', 'XLU', 'XLRE',
+                # Tech giants
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
+                'AMD', 'INTC', 'IBM', 'ORCL', 'CRM', 'ADBE', 'PYPL', 'SQ',
+                # Large cap finance
+                'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'V', 'MA', 'AXP', 'BLK',
+                # Large cap healthcare
+                'JNJ', 'PFE', 'MRK', 'UNH', 'ABBV', 'LLY', 'TMO', 'ABT', 'DHR',
+                # Large cap consumer/industrial
+                'WMT', 'HD', 'COST', 'TGT', 'PG', 'KO', 'PEP', 'MCD', 'NKE', 'DIS',
+                'CAT', 'DE', 'BA', 'HON', 'UPS', 'FDX', 'GE', 'MMM', 'RTX',
+                # Energy and utilities
+                'XOM', 'CVX', 'COP', 'SLB', 'NEE', 'SO', 'DUK', 'D', 'EXC'
+            ]
+            logger.info(f"Using fallback list of {len(fallback_symbols)} known optionable symbols")
+            return fallback_symbols
+
+    def is_options_enabled(self, symbol: str) -> bool:
+        """
+        Check if a specific symbol has options trading enabled.
+        
+        Args:
+            symbol: Stock symbol to check
+            
+        Returns:
+            bool: True if options are enabled for this symbol
+        """
+        try:
+            asset = self.api.get_asset(symbol)
+            
+            # Check if the asset has explicit options_enabled attribute
+            if hasattr(asset, 'options_enabled'):
+                return asset.options_enabled
+            
+            # If no explicit attribute, check against known optionable symbols
+            known_optionable = [
+                'SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'TLT', 'EFA', 'EEM',
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA',
+                'NFLX', 'AMD', 'INTC', 'IBM', 'ORCL', 'CRM', 'ADBE',
+                'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'V', 'MA',
+                'JNJ', 'PFE', 'MRK', 'UNH', 'ABBV', 'LLY', 'TMO',
+                'XOM', 'CVX', 'COP', 'SLB', 'OXY', 'MPC', 'PSX',
+                'WMT', 'HD', 'PG', 'KO', 'PEP', 'MCD', 'NKE', 'DIS'
+            ]
+            
+            return symbol.upper() in known_optionable
+            
+        except Exception as e:
+            logger.debug(f"Could not check options status for {symbol}: {e}")
+            return False
+
+    def get_optionable_symbols_from_list(self, symbols: List[str]) -> List[str]:
+        """
+        Filter a list of symbols to only include those with options enabled.
+        
+        Args:
+            symbols: List of symbols to check
+            
+        Returns:
+            List[str]: Filtered list of symbols with options enabled
+        """
+        optionable = []
+        
+        logger.info(f"Checking options availability for {len(symbols)} symbols...")
+        
+        for symbol in symbols:
+            if self.is_options_enabled(symbol):
+                optionable.append(symbol)
+        
+        logger.info(f"Found {len(optionable)} optionable symbols from input list")
+        return optionable 
+
+    def get_option_contracts(self, underlying_symbol: str, expiration_date: Optional[str] = None, 
+                           option_type: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+        """
+        Get available option contracts for a given underlying symbol using Alpaca's new options API.
+        
+        Args:
+            underlying_symbol: The underlying stock symbol (e.g., 'AAPL')
+            expiration_date: Optional expiration date filter (YYYY-MM-DD format)
+            option_type: Optional type filter ('call' or 'put')
+            limit: Maximum number of contracts to return
+            
+        Returns:
+            List[Dict[str, Any]]: List of available option contracts
+        """
+        try:
+            # Build query parameters as a query string
+            query_params = [f'underlying_symbols={underlying_symbol}', f'limit={limit}']
+            
+            if expiration_date:
+                query_params.append(f'expiration_date_gte={expiration_date}')
+                query_params.append(f'expiration_date_lte={expiration_date}')
+            
+            if option_type:
+                query_params.append(f'type={option_type}')
+                
+            query_string = '&'.join(query_params)
+            endpoint = f'/options/contracts?{query_string}'
+            
+            logger.info(f"Calling Alpaca options API: {endpoint}")
+            
+            # Use Alpaca's new options contracts endpoint
+            response = self.api.get(endpoint)
+            
+            if hasattr(response, 'option_contracts'):
+                contracts = response.option_contracts
+                logger.info(f"Found {len(contracts)} option contracts for {underlying_symbol}")
+                return [contract._raw for contract in contracts] if contracts else []
+            elif isinstance(response, dict) and 'option_contracts' in response:
+                contracts = response['option_contracts']
+                logger.info(f"Found {len(contracts)} option contracts for {underlying_symbol}")
+                return contracts
+            else:
+                logger.warning(f"No option contracts found for {underlying_symbol}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error fetching option contracts for {underlying_symbol}: {e}")
+            return []

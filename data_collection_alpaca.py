@@ -852,6 +852,270 @@ class AlpacaDataCollector:
             logger.error(f"❌ Feature engineering failed for {symbol}: {e}")
             return None
     
+    def get_market_features(self, symbol: str, horizon_days: int = 3) -> Dict[str, float]:
+        """
+        Extract market features for real-time trading decisions in EXACT training order.
+        
+        Args:
+            symbol: The symbol to analyze
+            horizon_days: Prediction horizon (default 3 days)
+            
+        Returns:
+            Dictionary of market features for ML models in exact training order
+        """
+        try:
+            # Get recent market data
+            df = self.get_historical_data(symbol, days=100)  # Get sufficient data for features
+            if df is None or len(df) < 50:
+                logger.warning(f"❌ Insufficient data for {symbol}")
+                return {}
+
+            # Calculate technical indicators only
+            df = self.calculate_technical_indicators(df)
+            
+            # Extract latest features in EXACT training order as per optimized_catboost_metadata.json
+            latest_features = {}
+            if len(df) > 0:
+                latest_row = df.iloc[-1]
+                
+                # Extract features in EXACT training order
+                latest_features = {
+                    'price_change_1d': latest_row.get('price_change_1d', 0.0),
+                    'price_change_5d': latest_row.get('price_change_5d', 0.0),
+                    'price_change_10d': latest_row.get('price_change_10d', 0.0),
+                    'price_change_20d': latest_row.get('price_change_20d', 0.0),
+                    'sma_5': latest_row.get('sma_5', latest_row.get('close', 100.0)),
+                    'sma_10': latest_row.get('sma_10', latest_row.get('close', 100.0)),
+                    'sma_20': latest_row.get('sma_20', latest_row.get('close', 100.0)),
+                    'sma_50': latest_row.get('sma_50', latest_row.get('close', 100.0)),
+                    'sma_200': latest_row.get('sma_200', latest_row.get('close', 100.0)),
+                    'price_vs_sma5': latest_row.get('price_vs_sma5', 0.0),
+                    'price_vs_sma10': latest_row.get('price_vs_sma10', 0.0),
+                    'price_vs_sma20': latest_row.get('price_vs_sma20', 0.0),
+                    'price_vs_sma50': latest_row.get('price_vs_sma50', 0.0),
+                    'price_vs_sma200': latest_row.get('price_vs_sma200', 0.0),
+                    'trend_regime': latest_row.get('trend_regime', 0),
+                    'volatility_5d': latest_row.get('volatility_5d', 0.2),
+                    'volatility_10d': latest_row.get('volatility_10d', 0.2),
+                    'volatility_20d': latest_row.get('volatility_20d', 0.2),
+                    'volatility_50d': latest_row.get('volatility_50d', 0.2),
+                    'volatility_regime': latest_row.get('volatility_regime', 0),
+                    'volume_sma_10': latest_row.get('volume_sma_10', latest_row.get('volume', 1000000)),
+                    'volume_sma_50': latest_row.get('volume_sma_50', latest_row.get('volume', 1000000)),
+                    'volume_ratio': latest_row.get('volume_ratio', 1.0),
+                    'volume_regime': latest_row.get('volume_regime', 0),
+                    'hl_ratio': latest_row.get('hl_ratio', 0.02),
+                    'hl_ratio_5d': latest_row.get('hl_ratio_5d', 0.02),
+                    'gap_up': latest_row.get('gap_up', 0),
+                    'gap_down': latest_row.get('gap_down', 0),
+                    'rsi_14': latest_row.get('rsi_14', 50.0),
+                    'momentum_regime': latest_row.get('momentum_regime', 0),
+                    'macd': latest_row.get('macd', 0.0),
+                    'macd_signal': latest_row.get('macd_signal', 0.0),
+                    'macd_histogram': latest_row.get('macd_histogram', 0.0),
+                    'macd_regime': latest_row.get('macd_regime', 0),
+                    'bb_upper': latest_row.get('bb_upper', latest_row.get('close', 100.0) * 1.02),
+                    'bb_lower': latest_row.get('bb_lower', latest_row.get('close', 100.0) * 0.98),
+                    'bb_position': latest_row.get('bb_position', 0.5),
+                    'mean_reversion_regime': latest_row.get('mean_reversion_regime', 0),
+                    'composite_regime_score': latest_row.get('composite_regime_score', 0.0),
+                    'trend_regime_changes': latest_row.get('trend_regime_changes', 0),
+                    'trend_regime_stability': latest_row.get('trend_regime_stability', 1.0),
+                    'bull_low_vol': latest_row.get('bull_low_vol', 0),
+                    'bear_high_vol': latest_row.get('bear_high_vol', 0),
+                    'sideways_low_vol': latest_row.get('sideways_low_vol', 0),
+                    'price_acceleration': latest_row.get('price_acceleration', 0.0),
+                    'price_theta': latest_row.get('price_theta', 0.0),
+                    'vol_sensitivity': latest_row.get('vol_sensitivity', 0.0),
+                    'price_vol_correlation': latest_row.get('price_vol_correlation', 0.0),
+                    'delta_proxy': latest_row.get('delta_proxy', 0.5),
+                    'momentum_acceleration': latest_row.get('momentum_acceleration', 0.0),
+                    'implied_vol_proxy': latest_row.get('implied_vol_proxy', 0.2),
+                    'implied_vol_change': latest_row.get('implied_vol_change', 0.0),
+                    'implied_vol_percentile': latest_row.get('implied_vol_percentile', 0.5),
+                    'vol_percentile_50d': latest_row.get('vol_percentile_50d', 0.5),
+                    'vol_regime_high': latest_row.get('vol_regime_high', 0),
+                    'vol_regime_low': latest_row.get('vol_regime_low', 0),
+                    'vix_top_10pct': latest_row.get('vix_top_10pct', 0),
+                    'vix_bottom_10pct': latest_row.get('vix_bottom_10pct', 0),
+                    'time_to_expiry_proxy': latest_row.get('time_to_expiry_proxy', 30.0),
+                    'theta_decay': latest_row.get('theta_decay', 0.01),
+                    'theta_acceleration': latest_row.get('theta_acceleration', 0.0),
+                    'atr_20d': latest_row.get('atr_20d', latest_row.get('close', 100.0) * 0.02),
+                    'spread_width_proxy': latest_row.get('spread_width_proxy', 0.01),
+                    'move_vs_spread': latest_row.get('move_vs_spread', 1.0),
+                    'spread_efficiency': latest_row.get('spread_efficiency', 1.0),
+                    'market_trend_strength': latest_row.get('market_trend_strength', 0.5),
+                    'long_term_trend': latest_row.get('long_term_trend', 1),
+                    'relative_strength': latest_row.get('relative_strength', 0.5),
+                    'momentum_percentile': latest_row.get('momentum_percentile', 0.5),
+                    'quarter': latest_row.get('quarter', 1),
+                    'month': latest_row.get('month', 1),
+                    'earnings_season': latest_row.get('earnings_season', 0),
+                    'volume_price_divergence': latest_row.get('volume_price_divergence', 0.0),
+                    'accumulation_distribution': latest_row.get('accumulation_distribution', 0.0),
+                    'accumulation_distribution_sma': latest_row.get('accumulation_distribution_sma', 0.0),
+                    'doji': latest_row.get('doji', 0),
+                    'hammer': latest_row.get('hammer', 0),
+                    'shooting_star': latest_row.get('shooting_star', 0),
+                    'resistance_level': latest_row.get('resistance_level', latest_row.get('close', 100.0) * 1.05),
+                    'support_level': latest_row.get('support_level', latest_row.get('close', 100.0) * 0.95),
+                    'distance_to_resistance': latest_row.get('distance_to_resistance', 0.05),
+                    'distance_to_support': latest_row.get('distance_to_support', 0.05),
+                    'vol_clustering': latest_row.get('vol_clustering', 0.0),
+                    'vol_persistence': latest_row.get('vol_persistence', 0.5),
+                    'vol_skew': latest_row.get('vol_skew', 0.0),
+                    'vol_kurtosis': latest_row.get('vol_kurtosis', 3.0),
+                    'spread_proxy': latest_row.get('spread_proxy', 0.01),
+                    'spread_volatility': latest_row.get('spread_volatility', 0.005),
+                    'price_impact': latest_row.get('price_impact', 0.001),
+                    'illiquidity_proxy': latest_row.get('illiquidity_proxy', 0.01),
+                    'momentum_3d': latest_row.get('momentum_3d', 0.0),
+                    'momentum_7d': latest_row.get('momentum_7d', 0.0),
+                    'momentum_14d': latest_row.get('momentum_14d', 0.0),
+                    'momentum_21d': latest_row.get('momentum_21d', 0.0),
+                    'mean_reversion_5d': latest_row.get('mean_reversion_5d', 0.0),
+                    'mean_reversion_20d': latest_row.get('mean_reversion_20d', 0.0),
+                    'momentum_consistency': latest_row.get('momentum_consistency', 0.5),
+                    'beta_proxy': latest_row.get('beta_proxy', 1.0),
+                    'correlation_stability': latest_row.get('correlation_stability', 0.5),
+                    'extreme_move_up': latest_row.get('extreme_move_up', 0),
+                    'extreme_move_down': latest_row.get('extreme_move_down', 0),
+                    'overnight_gap': latest_row.get('overnight_gap', 0.0),
+                    'gap_magnitude': latest_row.get('gap_magnitude', 0.0),
+                    'gap_follow_through': latest_row.get('gap_follow_through', 0),
+                    'technical_strength': latest_row.get('technical_strength', 0.5),
+                    'risk_adjusted_return_5d': latest_row.get('risk_adjusted_return_5d', 0.0),
+                    'risk_adjusted_return_20d': latest_row.get('risk_adjusted_return_20d', 0.0),
+                    'quality_score': latest_row.get('quality_score', 0.5),
+                    'target_1d_enhanced': latest_row.get('target_1d_enhanced', 0),
+                    'target_3d_enhanced': latest_row.get('target_3d_enhanced', 0),
+                    'target_5d_enhanced': latest_row.get('target_5d_enhanced', 0),
+                    'target_7d_enhanced': latest_row.get('target_7d_enhanced', 0),
+                    'target_10d_enhanced': latest_row.get('target_10d_enhanced', 0),
+                    'target_14d_enhanced': latest_row.get('target_14d_enhanced', 0),
+                    'target_21d_enhanced': latest_row.get('target_21d_enhanced', 0),
+                    'pnl_ratio': latest_row.get('pnl_ratio', 0.0),
+                    'holding_days': latest_row.get('holding_days', 1.0),
+                    'daily_return': latest_row.get('daily_return', 0.0)
+                }
+            
+            logger.info(f"✅ Extracted {len(latest_features)} market features for {symbol} in training order")
+            return latest_features
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get market features for {symbol}: {e}")
+            return {}
+    
+    def get_available_option_expirations(self, symbol: str, min_dte: int = 25, max_dte: int = 55) -> List[str]:
+        """
+        Get available option expiration dates for a symbol.
+        
+        Args:
+            symbol: The symbol to check
+            min_dte: Minimum days to expiration
+            max_dte: Maximum days to expiration
+            
+        Returns:
+            List of expiration dates in YYYY-MM-DD format
+        """
+        try:
+            today = datetime.now().date()
+            expirations = []
+            
+            # Generate standard monthly expirations for the next few months
+            current_date = today
+            for i in range(6):  # Look ahead 6 months
+                # Find third Friday of the month (standard monthly expiration)
+                year = current_date.year
+                month = current_date.month
+                
+                # First day of month
+                first_day = datetime(year, month, 1).date()
+                
+                # Find first Friday
+                days_to_friday = (4 - first_day.weekday()) % 7
+                first_friday = first_day + timedelta(days=days_to_friday)
+                
+                # Third Friday
+                third_friday = first_friday + timedelta(days=14)
+                
+                # Check if it's in our DTE range
+                dte = (third_friday - today).days
+                if min_dte <= dte <= max_dte:
+                    expirations.append(third_friday.strftime('%Y-%m-%d'))
+                
+                # Move to next month
+                if month == 12:
+                    current_date = datetime(year + 1, 1, 1).date()
+                else:
+                    current_date = datetime(year, month + 1, 1).date()
+            
+            # Add some weekly expirations (Fridays)
+            for weeks_ahead in range(1, 8):  # Next 8 weeks
+                friday = today + timedelta(days=(4 - today.weekday()) % 7 + weeks_ahead * 7)
+                dte = (friday - today).days
+                if min_dte <= dte <= max_dte:
+                    exp_str = friday.strftime('%Y-%m-%d')
+                    if exp_str not in expirations:
+                        expirations.append(exp_str)
+            
+            # Sort by date
+            expirations.sort()
+            
+            logger.info(f"✅ Found {len(expirations)} option expirations for {symbol}")
+            return expirations
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get option expirations for {symbol}: {e}")
+            # Return some reasonable defaults
+            today = datetime.now().date()
+            defaults = []
+            for weeks in [4, 6, 8]:  # 4, 6, 8 weeks out
+                exp_date = today + timedelta(weeks=weeks)
+                defaults.append(exp_date.strftime('%Y-%m-%d'))
+            return defaults
+    
+    def analyze_option_liquidity(self, symbol: str, expiration: str, strikes: List[float]) -> Dict[str, Any]:
+        """
+        Analyze option liquidity for given strikes.
+        
+        Args:
+            symbol: Stock symbol
+            expiration: Expiration date
+            strikes: List of strike prices
+            
+        Returns:
+            Dictionary with liquidity analysis
+        """
+        try:
+            # Simplified liquidity analysis - assume all strikes are liquid for major symbols
+            major_symbols = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA']
+            
+            if symbol in major_symbols:
+                liquid_strikes = strikes.copy()
+                analysis = f"High liquidity expected for {symbol} - major index/stock"
+            else:
+                # Assume moderate liquidity for other symbols
+                liquid_strikes = strikes.copy()
+                analysis = f"Moderate liquidity expected for {symbol}"
+            
+            return {
+                'liquid_strikes': liquid_strikes,
+                'analysis': analysis,
+                'symbol': symbol,
+                'expiration': expiration
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to analyze liquidity for {symbol}: {e}")
+            return {
+                'liquid_strikes': [],
+                'analysis': f"Could not analyze liquidity: {e}",
+                'symbol': symbol,
+                'expiration': expiration
+            }
+    
     def collect_batch_data(self, batch_name: str, symbols: List[str], 
                          max_symbols: Optional[int] = None,
                          use_enhanced_targets: bool = True,

@@ -1,0 +1,93 @@
+{
+  "batches": {
+    "batch_1": [
+      "EURKU",
+      "EURK",
+      "SVAL",
+      "EUM",
+      "SVCC",
+      "SVCCU",
+      "SXQG",
+      "EUFN",
+      "EUDV",
+      "EUDG",
+      "ETX",
+      "ETU",
+      "BTCC",
+      "BTCL",
+      "ETHE",
+      "ETHD",
+      "ETG",
+      "ETEC",
+      "ETB",
+      "ESP",
+      "ESN",
+      "TASK",
+      "ESMV",
+      "BUSA",
+      "PWV"
+    ],
+    "batch_2": [
+      "ESGG",
+      "EQL",
+      "EQIN",
+      "TBFC",
+      "EPV",
+      "TBFG",
+      "EPSM",
+      "EPS",
+      "EPRF",
+      "TBUX",
+      "EPMB",
+      "TBX",
+      "EPIN",
+      "EPHE",
+      "EPEM",
+      "CAPNU",
+      "EOT",
+      "CBTA",
+      "EOCT",
+      "ENVX",
+      "ENOR",
+      "ENLT",
+      "ENJ",
+      "EMSF",
+      "EMQQ"
+    ],
+    "batch_3": [
+      "CCLDO",
+      "PY",
+      "CCNEP",
+      "EMPB",
+      "EMP",
+      "EMOT",
+      "CCSB",
+      "EMMF",
+      "CEGX",
+      "EMHC",
+      "EMF",
+      "EMES",
+      "TLTD",
+      "PYT",
+      "PYZ",
+      "EMEQ",
+      "TLTE",
+      "EMDV"
+    ]
+  },
+  "metadata": {
+    "created_at": "2025-07-21T17:26:21.392396",
+    "total_batches": 3,
+    "total_symbols": 68,
+    "batch_size": 25,
+    "filter_criteria": {
+      "min_price": 5.0,
+      "min_market_cap": 1000000000,
+      "min_avg_volume": 500000,
+      "pe_ratio_range": [
+        0.0,
+        40.0
+      ]
+    }
+  }
+}

@@ -409,14 +409,18 @@ def train_clean_models():
     print("CLEAN MODEL TRAINING WITH OPTUNA OPTIMIZATION")
     print("This will train models on clean data (no leakage) with hyperparameter optimization")
     
-    # Ask user for number of trials
+    # Ask user for number of trials with better error handling
+    n_trials = 50  # Default value
+    
     try:
-        n_trials = int(input("Enter number of Optuna trials per model (25-75 recommended): "))
-        if n_trials < 10:
-            n_trials = 25
-        elif n_trials > 100:
-            n_trials = 75
-    except ValueError:
+        user_input = input("Enter number of Optuna trials per model (25-75 recommended, press Enter for 50): ").strip()
+        if user_input:
+            n_trials = int(user_input)
+            if n_trials < 10:
+                n_trials = 25
+            elif n_trials > 100:
+                n_trials = 75
+    except (ValueError, EOFError):
         n_trials = 50
         print(f"Using default: {n_trials} trials per model")
     
@@ -429,11 +433,8 @@ def train_clean_models():
     print("\nTRAINING COMPLETE!")
     print("All clean optimized models saved to models/clean/")
     print("These models are ready for production paper trading!")
-
-if __name__ == "__main__":
-    train_clean_models()
-    print("All clean optimized models saved to models/clean/")
-    print("These models are ready for production paper trading!")
+    
+    return results
 
 if __name__ == "__main__":
     train_clean_models()
