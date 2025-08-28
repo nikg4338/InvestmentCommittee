@@ -11,6 +11,7 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import time
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
@@ -89,56 +90,85 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def load_trade_data():
-    """Load comprehensive trade data from all sources."""
+    """Load comprehensive trade data from all sources with robust error handling."""
     try:
         # Load executed trades from simple autonomous trader (check both locations)
         executed_trades = []
         
         # Primary location: trading/logs/
         if os.path.exists('trading/logs/executed_trades.jsonl'):
-            with open('trading/logs/executed_trades.jsonl', 'r') as f:
-                for line in f:
-                    if line.strip():
-                        executed_trades.append(json.loads(line.strip()))
+            try:
+                with open('trading/logs/executed_trades.jsonl', 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:  # Skip empty lines
+                            try:
+                                executed_trades.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue  # Skip malformed lines
+            except Exception:
+                pass  # File exists but can't read
+                
         # Fallback location: logs/
         elif os.path.exists('logs/executed_trades.jsonl'):
-            with open('logs/executed_trades.jsonl', 'r') as f:
-                for line in f:
-                    if line.strip():
-                        executed_trades.append(json.loads(line.strip()))
+            try:
+                with open('logs/executed_trades.jsonl', 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:  # Skip empty lines
+                            try:
+                                executed_trades.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue  # Skip malformed lines
+            except Exception:
+                pass  # File exists but can't read
         
         # Load open positions (check both locations)
         open_positions = []
-        if os.path.exists('trading/logs/open_positions.json'):
-            with open('trading/logs/open_positions.json', 'r') as f:
-                open_positions = json.load(f)
-        elif os.path.exists('logs/open_positions.json'):
-            with open('logs/open_positions.json', 'r') as f:
-                open_positions = json.load(f)
+        for pos_file in ['trading/logs/open_positions.json', 'logs/open_positions.json']:
+            if os.path.exists(pos_file):
+                try:
+                    with open(pos_file, 'r') as f:
+                        content = f.read().strip()
+                        if content:  # Only parse if file has content
+                            open_positions = json.loads(content)
+                            break  # Use first successful load
+                except (json.JSONDecodeError, Exception):
+                    continue  # Try next file or skip if error
         
         # Load closed trades (check both locations)
         closed_trades = []
-        if os.path.exists('trading/logs/closed_trades.jsonl'):
-            with open('trading/logs/closed_trades.jsonl', 'r') as f:
-                for line in f:
-                    if line.strip():
-                        closed_trades.append(json.loads(line.strip()))
-        elif os.path.exists('logs/closed_trades.jsonl'):
-            with open('logs/closed_trades.jsonl', 'r') as f:
-                for line in f:
-                    if line.strip():
-                        closed_trades.append(json.loads(line.strip()))
+        for closed_file in ['trading/logs/closed_trades.jsonl', 'logs/closed_trades.jsonl']:
+            if os.path.exists(closed_file):
+                try:
+                    with open(closed_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:  # Skip empty lines
+                                try:
+                                    closed_trades.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    continue  # Skip malformed lines
+                    break  # Use first successful file
+                except Exception:
+                    continue  # Try next file
         
         # Load managed trades (legacy compatibility)
         managed_trades = {}
         if os.path.exists('data/managed_trades.json'):
-            with open('data/managed_trades.json', 'r') as f:
-                managed_trades = json.load(f)
+            try:
+                with open('data/managed_trades.json', 'r') as f:
+                    content = f.read().strip()
+                    if content:  # Only parse if file has content
+                        managed_trades = json.loads(content)
+            except (json.JSONDecodeError, Exception):
+                managed_trades = {}  # Use empty dict if error
                     
         return executed_trades, open_positions, closed_trades, managed_trades
         
     except Exception as e:
-        st.error(f"Error loading trade data: {e}")
+        # Show user-friendly message without technical details
+        st.warning(f"⚠️ Trade data files are being initialized. Some data may not be available yet.")
         return [], [], [], {}
 
 def load_system_logs():
@@ -307,6 +337,123 @@ def main():
             help="Total premium collected from open positions"
         )
     
+    # Adaptive Trading System Status Section
+    st.markdown('<div class="section-header">🔄 Adaptive Trading System Status</div>', unsafe_allow_html=True)
+    
+    # Detect current market mode from logs
+    current_mode = "UNKNOWN"
+    daily_trades = 0
+    earnings_trades = 0
+    max_trades = 50
+    position_size = "100%"
+    
+    try:
+        # Check recent logs for earnings season detection
+        if os.path.exists('logs/autonomous_trading.log'):
+            with open('logs/autonomous_trading.log', 'r', encoding='utf-8') as f:
+                recent_content = f.read()[-10000:]  # Last 10KB
+                
+                if "EARNINGS SEASON" in recent_content:
+                    current_mode = "EARNINGS SEASON"
+                    max_trades = 5
+                    position_size = "40%"
+                elif "NORMAL CONDITIONS" in recent_content:
+                    current_mode = "NORMAL MARKET"
+                    max_trades = 50
+                    position_size = "100%"
+                
+                # Extract trade counts if available
+                lines = recent_content.split('\n')
+                for line in reversed(lines):
+                    if "Daily trades:" in line:
+                        try:
+                            parts = line.split("Daily trades: ")[1].split("/")[0]
+                            daily_trades = int(parts)
+                        except:
+                            pass
+                        break
+    except Exception:
+        pass
+    
+    # Display adaptive system status
+    adaptive_col1, adaptive_col2, adaptive_col3, adaptive_col4 = st.columns(4)
+    
+    with adaptive_col1:
+        if current_mode == "EARNINGS SEASON":
+            st.markdown('<div style="background: linear-gradient(135deg, #ff6b6b, #ffa726); padding: 1rem; border-radius: 10px; text-align: center;">'
+                       '<h4 style="margin: 0; color: white;">📊 EARNINGS MODE</h4>'
+                       '<p style="margin: 0; color: white;">Quality-Focused</p></div>', unsafe_allow_html=True)
+        elif current_mode == "NORMAL MARKET":
+            st.markdown('<div style="background: linear-gradient(135deg, #4caf50, #8bc34a); padding: 1rem; border-radius: 10px; text-align: center;">'
+                       '<h4 style="margin: 0; color: white;">📈 NORMAL MODE</h4>'
+                       '<p style="margin: 0; color: white;">Full Capacity</p></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background: linear-gradient(135deg, #9e9e9e, #607d8b); padding: 1rem; border-radius: 10px; text-align: center;">'
+                       '<h4 style="margin: 0; color: white;">❓ STATUS UNKNOWN</h4>'
+                       '<p style="margin: 0; color: white;">Checking System</p></div>', unsafe_allow_html=True)
+    
+    with adaptive_col2:
+        progress = daily_trades / max_trades if max_trades > 0 else 0
+        st.metric(
+            "Daily Trades", 
+            f"{daily_trades}/{max_trades}",
+            help=f"Trades executed today ({'earnings limit' if current_mode == 'EARNINGS SEASON' else 'normal limit'})"
+        )
+        st.progress(progress)
+    
+    with adaptive_col3:
+        st.metric(
+            "Position Size", 
+            position_size,
+            help="Current position sizing relative to normal market conditions"
+        )
+        
+        # Add position size explanation
+        if current_mode == "EARNINGS SEASON":
+            st.caption("🛡️ Risk reduced during earnings")
+        else:
+            st.caption("💪 Full position size")
+    
+    with adaptive_col4:
+        # Quality thresholds based on mode
+        if current_mode == "EARNINGS SEASON":
+            ml_threshold = "80%"
+            quality_threshold = "80%"
+            threshold_color = "#ff6b6b"
+        else:
+            ml_threshold = "70%"
+            quality_threshold = "50%"
+            threshold_color = "#4caf50"
+            
+        st.markdown(f'<div style="background: {threshold_color}; padding: 0.5rem; border-radius: 5px; text-align: center;">'
+                   f'<small style="color: white; font-weight: bold;">Quality Thresholds</small><br>'
+                   f'<span style="color: white;">ML: {ml_threshold} | Quality: {quality_threshold}</span></div>', 
+                   unsafe_allow_html=True)
+    
+    # Show adaptive features explanation
+    with st.expander("🔍 How Adaptive Trading Works", expanded=False):
+        st.markdown("""
+        **The system automatically adapts to market conditions:**
+        
+        **📈 Normal Market Mode:**
+        - Up to 50 trades per day (full capacity)
+        - 100% position size (normal risk)
+        - ML confidence threshold: 70%
+        - Quality score threshold: 50%
+        
+        **📊 Earnings Season Mode:**
+        - Limited to 5 trades per day (quality-focused)
+        - 40% position size (reduced risk)
+        - ML confidence threshold: 80% (elevated)
+        - Quality score threshold: 80% (elevated)
+        - Focus on top 3-5 best opportunities only
+        
+        **🔄 Automatic Detection:**
+        - System samples major stocks (SPY, AAPL, MSFT) for earnings indicators
+        - Switches modes when 40%+ of samples show earnings season
+        - No manual intervention required
+        """)
+
     # Options Trading Status Section
     st.markdown('<div class="section-header">📊 Options Trading Status</div>', unsafe_allow_html=True)
     
@@ -384,95 +531,110 @@ def main():
     st.markdown('<div class="section-header">🎯 Live Positions</div>', unsafe_allow_html=True)
     
     if open_positions:
-        # Create position tracking table with enhanced data
-        position_data = []
-        for pos in open_positions:
-            entry_date = datetime.fromisoformat(pos.get('entry_time', datetime.now().isoformat()))
-            days_held = (datetime.now() - entry_date).days
-            
-            # Calculate theta decay progress
-            estimated_credit = pos.get('estimated_credit', 0)
-            time_factor = min(0.5, days_held / 30.0)  # 50% max profit over 30 days
-            current_profit = estimated_credit * time_factor
-            profit_pct = (current_profit / estimated_credit * 100) if estimated_credit > 0 else 0
-            
-            # Expiration data
-            exp_date = datetime.fromisoformat(pos.get('expiration_date', datetime.now().isoformat()))
-            days_to_exp = (exp_date - datetime.now()).days
-            
-            position_data.append({
-                'Symbol': pos.get('symbol', 'N/A'),
-                'Strategy': 'Bull Put Spread',
-                'Short Strike': f"${pos.get('short_strike', 0):.2f}",
-                'Long Strike': f"${pos.get('long_strike', 0):.2f}",
-                'Credit': f"${estimated_credit:.2f}",
-                'Days Held': days_held,
-                'DTE': days_to_exp,
-                'Current P&L': f"${current_profit:.2f}",
-                'P&L %': f"{profit_pct:.1f}%",
-                'Status': '🟢 Open' if days_to_exp > 5 else '🟡 Near Exp'
-            })
+        # Filter to show only real Alpaca positions
+        real_positions = [pos for pos in open_positions if pos.get('real_alpaca_order', False)]
+        simulated_positions = [pos for pos in open_positions if not pos.get('real_alpaca_order', False)]
         
-        if position_data:
-            df_positions = pd.DataFrame(position_data)
+        if simulated_positions and not real_positions:
+            st.warning(f"⚠️ No real Alpaca trades yet - {len(simulated_positions)} simulated positions (API connection issues)")
+            st.info("💡 Check Alpaca API connection and options trading permissions")
             
-            # Color code the P&L columns
-            def color_pnl_columns(s):
-                styles = []
-                for val in s:
-                    if 'P&L' in s.name:  # Apply to P&L related columns
-                        if '$' in str(val) and '-' in str(val):
-                            styles.append('color: #ff4444; font-weight: bold')
-                        elif '$' in str(val):
-                            styles.append('color: #00ff88; font-weight: bold')
-                        else:
-                            styles.append('')
-                    else:
-                        styles.append('')
-                return styles
-            
-            styled_positions = df_positions.style.apply(color_pnl_columns, axis=0)
-            
-            st.dataframe(
-                styled_positions,
-                use_container_width=True,
-                height=300
-            )
-            
-            # Position heatmap
-            st.subheader("📊 Position Heatmap")
-            
-            # Create profit heatmap
-            profit_data = []
-            for pos in position_data:
-                profit_num = float(pos['Current P&L'].replace('$', '').replace(',', ''))
-                profit_data.append({
-                    'Symbol': pos['Symbol'],
-                    'Profit': profit_num,
-                    'DTE': pos['DTE']
+        if not real_positions and not simulated_positions:
+            st.info("No active positions")
+        
+        # Show real positions if any exist
+        positions_to_display = real_positions if real_positions else []
+        
+        if positions_to_display:
+            # Create position tracking table with enhanced data
+            position_data = []
+            for pos in positions_to_display:
+                entry_date = datetime.fromisoformat(pos.get('entry_time', datetime.now().isoformat()))
+                days_held = (datetime.now() - entry_date).days
+                
+                # Calculate theta decay progress
+                estimated_credit = pos.get('estimated_credit', 0)
+                time_factor = min(0.5, days_held / 30.0)  # 50% max profit over 30 days
+                current_profit = estimated_credit * time_factor
+                profit_pct = (current_profit / estimated_credit * 100) if estimated_credit > 0 else 0
+                
+                # Expiration data
+                exp_date = datetime.fromisoformat(pos.get('expiration_date', datetime.now().isoformat()))
+                days_to_exp = (exp_date - datetime.now()).days
+                
+                position_data.append({
+                    'Symbol': pos.get('symbol', 'N/A'),
+                    'Strategy': 'Bull Put Spread',
+                    'Short Strike': f"${pos.get('short_strike', 0):.2f}",
+                    'Long Strike': f"${pos.get('long_strike', 0):.2f}",
+                    'Credit': f"${estimated_credit:.2f}",
+                    'Days Held': days_held,
+                    'DTE': days_to_exp,
+                    'Current P&L': f"${current_profit:.2f}",
+                    'P&L %': f"{profit_pct:.1f}%",
+                    'Status': '🟢 Open' if days_to_exp > 5 else '🟡 Near Exp'
                 })
             
-            if profit_data:
-                df_heatmap = pd.DataFrame(profit_data)
+            if position_data:
+                df_positions = pd.DataFrame(position_data)
                 
-                fig_heatmap = px.scatter(
-                    df_heatmap, 
-                    x='DTE', 
-                    y='Symbol',
-                    size='Profit',
-                    color='Profit',
-                    color_continuous_scale='RdYlGn',
-                    title='Position P&L by Days to Expiration',
-                    hover_data=['Symbol', 'Profit', 'DTE']
+                # Color code the P&L columns
+                def color_pnl_columns(s):
+                    styles = []
+                    for val in s:
+                        if 'P&L' in s.name:  # Apply to P&L related columns
+                            if '$' in str(val) and '-' in str(val):
+                                styles.append('color: #ff4444; font-weight: bold')
+                            elif '$' in str(val):
+                                styles.append('color: #00ff88; font-weight: bold')
+                            else:
+                                styles.append('')
+                        else:
+                            styles.append('')
+                    return styles
+                
+                styled_positions = df_positions.style.apply(color_pnl_columns, axis=0)
+                
+                st.dataframe(
+                    styled_positions,
+                    use_container_width=True,
+                    height=300
                 )
                 
-                fig_heatmap.update_layout(
-                    height=400,
-                    title_font_size=16,
-                    coloraxis_colorbar_title="P&L ($)"
-                )
+                # Position heatmap
+                st.subheader("📊 Position Heatmap")
                 
-                st.plotly_chart(fig_heatmap, use_container_width=True)
+                # Create profit heatmap
+                profit_data = []
+                for pos in position_data:
+                    profit_num = float(pos['Current P&L'].replace('$', '').replace(',', ''))
+                    profit_data.append({
+                        'Symbol': pos['Symbol'],
+                        'Profit': profit_num,
+                        'DTE': pos['DTE']
+                    })
+                
+                if profit_data:
+                    df_heatmap = pd.DataFrame(profit_data)
+                    
+                    fig_heatmap = px.scatter(
+                        df_heatmap, 
+                        x='DTE', 
+                        y='Symbol',
+                        size='Profit',
+                        color='Profit',
+                        color_continuous_scale='RdYlGn',
+                        title='Position P&L by Days to Expiration',
+                        hover_data=['Symbol', 'Profit', 'DTE']
+                    )
+                    
+                    fig_heatmap.update_layout(
+                        height=400,
+                        title_font_size=16,
+                        coloraxis_colorbar_title="P&L ($)"
+                    )
+                    
+                    st.plotly_chart(fig_heatmap, use_container_width=True)
     else:
         st.info("📈 No open positions. System will start trading at market open (9:30 AM ET).")
         

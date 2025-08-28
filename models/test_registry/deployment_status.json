@@ -1,0 +1,25 @@
+{
+  "production": {},
+  "staging": {
+    "test_xgboost_batch1_v001": {
+      "promoted_at": "2025-08-27T21:23:50.905732",
+      "model_type": "xgboost",
+      "batch_name": "test_batch_1",
+      "version": "v001"
+    },
+    "test_xgboost_batch1_v002": {
+      "promoted_at": "2025-08-27T21:24:13.914805",
+      "model_type": "xgboost",
+      "batch_name": "test_batch_1",
+      "version": "v002"
+    },
+    "test_xgboost_batch1_v003": {
+      "promoted_at": "2025-08-27T21:24:37.748828",
+      "model_type": "xgboost",
+      "batch_name": "test_batch_1",
+      "version": "v003"
+    }
+  },
+  "clean": {},
+  "development": {}
+}

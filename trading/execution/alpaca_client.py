@@ -720,7 +720,7 @@ class AlpacaClient:
     def get_option_contracts(self, underlying_symbol: str, expiration_date: Optional[str] = None, 
                            option_type: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         """
-        Get available option contracts for a given underlying symbol using Alpaca's new options API.
+        Get available option contracts for a given underlying symbol using Alpaca's options API.
         
         Args:
             underlying_symbol: The underlying stock symbol (e.g., 'AAPL')
@@ -732,29 +732,25 @@ class AlpacaClient:
             List[Dict[str, Any]]: List of available option contracts
         """
         try:
-            # Build query parameters as a query string
-            query_params = [f'underlying_symbols={underlying_symbol}', f'limit={limit}']
+            # Build query parameters as a dictionary for the requests
+            query_params = {
+                'underlying_symbols': underlying_symbol,
+                'limit': limit
+            }
             
             if expiration_date:
-                query_params.append(f'expiration_date_gte={expiration_date}')
-                query_params.append(f'expiration_date_lte={expiration_date}')
+                query_params['expiration_date_gte'] = expiration_date
+                query_params['expiration_date_lte'] = expiration_date
             
             if option_type:
-                query_params.append(f'type={option_type}')
+                query_params['type'] = option_type
                 
-            query_string = '&'.join(query_params)
-            endpoint = f'/options/contracts?{query_string}'
+            logger.info(f"Calling Alpaca options API with params: {query_params}")
             
-            logger.info(f"Calling Alpaca options API: {endpoint}")
+            # Use Alpaca's options contracts endpoint with proper REST call
+            response = self.api._request('GET', '/options/contracts', data=query_params)
             
-            # Use Alpaca's new options contracts endpoint
-            response = self.api.get(endpoint)
-            
-            if hasattr(response, 'option_contracts'):
-                contracts = response.option_contracts
-                logger.info(f"Found {len(contracts)} option contracts for {underlying_symbol}")
-                return [contract._raw for contract in contracts] if contracts else []
-            elif isinstance(response, dict) and 'option_contracts' in response:
+            if isinstance(response, dict) and 'option_contracts' in response:
                 contracts = response['option_contracts']
                 logger.info(f"Found {len(contracts)} option contracts for {underlying_symbol}")
                 return contracts

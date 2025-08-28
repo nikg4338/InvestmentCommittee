@@ -1,0 +1,40 @@
+{
+  "batch": "batch_11",
+  "timestamp": "2025-08-28 01:34:50",
+  "training_time": 1.7151410579681396,
+  "n_samples": 9276,
+  "n_features": 108,
+  "n_models": 4,
+  "successful_models": [
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "random_forest"
+  ],
+  "failed_models": [],
+  "drift_features": 0,
+  "fixed_models": 0,
+  "evaluation": {
+    "xgboost": {
+      "auc": 0.6192713062967328,
+      "ap": 0.31898705260649873
+    },
+    "lightgbm": {
+      "auc": 0.6193365148675543,
+      "ap": 0.31747502073998435
+    },
+    "catboost": {
+      "auc": 0.6282459377475511,
+      "ap": 0.32793817419110083
+    },
+    "random_forest": {
+      "auc": 0.596442671200675,
+      "ap": 0.3061731229807003
+    },
+    "ensemble": {
+      "auc": 0.6291902544583341,
+      "ap": 0.32869561304947503
+    }
+  },
+  "errors": {}
+}

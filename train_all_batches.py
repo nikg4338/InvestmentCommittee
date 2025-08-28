@@ -145,7 +145,7 @@ def train_batch_models(
         logger.info(f"Training models for batch {batch_num} (LEAK-FREE Enhanced Pipeline)…")
 
     run_start = datetime.now()
-    trainer_script = 'train_models.py'
+    trainer_script = 'train_models_enhanced.py'
     
     # Ensure plots directory exists for plot saving
     os.makedirs('plots', exist_ok=True)
@@ -496,9 +496,25 @@ def process_batch(
     """End-to-end process for a single batch."""
     ensure_directories()
 
-    data_file = f"data/batch_{batch_num}_data.csv"
-    if not skip_collection:
-        data_file = collect_batch_data(batch_num) or data_file
+    # Try to find existing data file first
+    leak_free_file = f"data/leak_free_batch_{batch_num}_data.csv"
+    standard_file = f"data/batch_{batch_num}_data.csv"
+    
+    if skip_collection:
+        # Check for existing files in order of preference
+        if Path(leak_free_file).exists():
+            data_file = leak_free_file
+            logger.info(f"📁 Using existing leak-free data: {data_file}")
+        elif Path(standard_file).exists():
+            data_file = standard_file
+            logger.info(f"📁 Using existing standard data: {data_file}")
+        else:
+            logger.error(f"No existing data file found for batch {batch_num}")
+            logger.error(f"   Looked for: {leak_free_file}, {standard_file}")
+            return False
+    else:
+        # Collect fresh data
+        data_file = collect_batch_data(batch_num) or standard_file
 
     if not Path(data_file).exists():
         logger.error(f"Data file not found for batch {batch_num}: {data_file}")

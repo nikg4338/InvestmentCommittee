@@ -31,23 +31,23 @@ try:
     
     # Try a simple call without filters first
     try:
-        # Build the simplest possible query
-        endpoint = '/options/contracts?underlying_symbols=SPY&limit=10'
-        print(f"Testing endpoint: {endpoint}")
+        # Build the simplest possible query using proper REST call
+        query_params = {
+            'underlying_symbols': 'SPY',
+            'limit': 10
+        }
+        print(f"Testing with params: {query_params}")
         
-        response = client.api.get(endpoint)
+        response = client.api._request('GET', '/options/contracts', data=query_params)
         print(f"Response type: {type(response)}")
         print(f"Response: {response}")
         
-        if hasattr(response, 'option_contracts'):
-            contracts = response.option_contracts
-            print(f"Found {len(contracts)} contracts via attribute")
-        elif isinstance(response, dict) and 'option_contracts' in response:
+        if isinstance(response, dict) and 'option_contracts' in response:
             contracts = response['option_contracts']
             print(f"Found {len(contracts)} contracts via dict")
         else:
             print("No option_contracts found in response")
-            print(f"Available keys/attributes: {dir(response) if hasattr(response, '__dict__') else response}")
+            print(f"Available keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
             
     except Exception as e:
         print(f"❌ Error with basic call: {e}")

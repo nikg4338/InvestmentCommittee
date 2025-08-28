@@ -1,0 +1,89 @@
+{
+  "test_xgboost_batch1_v001": {
+    "model_id": "test_xgboost_batch1",
+    "full_model_id": "test_xgboost_batch1_v001",
+    "version": "v001",
+    "model_type": "xgboost",
+    "batch_name": "test_batch_1",
+    "model_path": "models/test/test_model.pkl",
+    "hyperparameters": {
+      "max_depth": 6,
+      "learning_rate": 0.1
+    },
+    "features": [
+      "feature_1",
+      "feature_2",
+      "feature_3"
+    ],
+    "feature_count": 3,
+    "training_config": {
+      "cv_folds": 5,
+      "timeout": 300
+    },
+    "model_size_mb": null,
+    "registration_time": "2025-08-27T21:23:50.891723",
+    "status": "deployed_staging",
+    "last_deployment": {
+      "environment": "staging",
+      "timestamp": "2025-08-27T21:23:50.905740"
+    }
+  },
+  "test_xgboost_batch1_v002": {
+    "model_id": "test_xgboost_batch1",
+    "full_model_id": "test_xgboost_batch1_v002",
+    "version": "v002",
+    "model_type": "xgboost",
+    "batch_name": "test_batch_1",
+    "model_path": "models/test/test_model.pkl",
+    "hyperparameters": {
+      "max_depth": 6,
+      "learning_rate": 0.1
+    },
+    "features": [
+      "feature_1",
+      "feature_2",
+      "feature_3"
+    ],
+    "feature_count": 3,
+    "training_config": {
+      "cv_folds": 5,
+      "timeout": 300
+    },
+    "model_size_mb": null,
+    "registration_time": "2025-08-27T21:24:13.907333",
+    "status": "deployed_staging",
+    "last_deployment": {
+      "environment": "staging",
+      "timestamp": "2025-08-27T21:24:13.914813"
+    }
+  },
+  "test_xgboost_batch1_v003": {
+    "model_id": "test_xgboost_batch1",
+    "full_model_id": "test_xgboost_batch1_v003",
+    "version": "v003",
+    "model_type": "xgboost",
+    "batch_name": "test_batch_1",
+    "model_path": "models/test/test_model.pkl",
+    "hyperparameters": {
+      "max_depth": 6,
+      "learning_rate": 0.1
+    },
+    "features": [
+      "feature_1",
+      "feature_2",
+      "feature_3"
+    ],
+    "feature_count": 3,
+    "training_config": {
+      "cv_folds": 5,
+      "timeout": 300
+    },
+    "model_size_mb": null,
+    "registration_time": "2025-08-27T21:24:37.741294",
+    "status": "deployed_staging",
+    "last_deployment": {
+      "environment": "staging",
+      "timestamp": "2025-08-27T21:24:37.748837"
+    }
+  }
+}

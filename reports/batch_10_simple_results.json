@@ -1,0 +1,16 @@
+{
+  "batch": "batch_10",
+  "timestamp": "2025-08-28 01:27:31",
+  "training_time": 4.608463764190674,
+  "n_samples": 14639,
+  "n_features": 108,
+  "n_models": 1,
+  "drift_features": 90,
+  "fixed_models": 0,
+  "evaluation": {
+    "lightgbm": {
+      "auc": 0.6620436082228458,
+      "ap": 0.24630197203474452
+    }
+  }
+}

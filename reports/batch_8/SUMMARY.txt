@@ -1,8 +1,0 @@
-Batch 8 Summary
-Generated: 2025-08-11 13:51:30
-
-Artifacts:
-- Results: reports\batch_8\results
-- Plots: reports\batch_8\plots
-- Training Log: reports\batch_8\batch_8_training.log
-- Telemetry: reports\batch_8\batch_8_telemetry.log

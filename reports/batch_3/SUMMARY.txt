@@ -1,8 +1,0 @@
-Batch 3 Summary
-Generated: 2025-08-11 13:35:49
-
-Artifacts:
-- Results: reports\batch_3\results
-- Plots: reports\batch_3\plots
-- Training Log: reports\batch_3\batch_3_training.log
-- Telemetry: reports\batch_3\batch_3_telemetry.log

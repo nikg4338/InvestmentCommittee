@@ -205,10 +205,52 @@ class LeakFreeAlpacaDataCollector:
             df.loc[df['sma_50'] > df['sma_200'], 'trend_regime'] = 1   # Uptrend
             df.loc[df['sma_50'] < df['sma_200'], 'trend_regime'] = -1  # Downtrend
         
+        # Volatility regime (relative to historical volatility)
+        if 'volatility_50d' in df.columns:
+            vol_percentile = df['volatility_20d'].rolling(50).rank(pct=True)
+            df['volatility_regime'] = 0  # Normal
+            df.loc[vol_percentile > 0.8, 'volatility_regime'] = 1   # High vol
+            df.loc[vol_percentile < 0.2, 'volatility_regime'] = -1  # Low vol
+        else:
+            df['volatility_regime'] = 0
+        
+        # Volume regime (relative to historical volume)
+        if 'volume_sma_50' in df.columns:
+            vol_relative = df['volume_sma_10'] / df['volume_sma_50']
+            df['volume_regime'] = 0  # Normal
+            df.loc[vol_relative > 1.5, 'volume_regime'] = 1   # High volume
+            df.loc[vol_relative < 0.5, 'volume_regime'] = -1  # Low volume
+        else:
+            df['volume_regime'] = 0
+        
         # Momentum regime
         df['momentum_regime'] = 0
         df.loc[df['rsi_14'] > 70, 'momentum_regime'] = 1   # Overbought
         df.loc[df['rsi_14'] < 30, 'momentum_regime'] = -1  # Oversold
+        
+        # MACD regime
+        df['macd_regime'] = 0
+        df.loc[(df['macd'] > df['macd_signal']) & (df['macd_histogram'] > 0), 'macd_regime'] = 1   # Bullish
+        df.loc[(df['macd'] < df['macd_signal']) & (df['macd_histogram'] < 0), 'macd_regime'] = -1  # Bearish
+        
+        # Mean reversion regime (Bollinger Bands position)
+        df['mean_reversion_regime'] = 0
+        df.loc[df['bb_position'] > 0.8, 'mean_reversion_regime'] = 1   # Near upper band
+        df.loc[df['bb_position'] < 0.2, 'mean_reversion_regime'] = -1  # Near lower band
+        
+        # Composite regime score
+        regime_components = ['trend_regime', 'volatility_regime', 'momentum_regime', 'macd_regime']
+        df['composite_regime_score'] = df[regime_components].sum(axis=1)
+        
+        # Regime stability (how long in current regime)
+        df['trend_regime_changes'] = (df['trend_regime'] != df['trend_regime'].shift(1)).astype(int)
+        df['trend_regime_stability'] = (~df['trend_regime_changes'].astype(bool)).groupby(
+            df['trend_regime_changes'].cumsum()).cumsum()
+        
+        # Cross-regime interactions
+        df['bull_low_vol'] = ((df['trend_regime'] == 1) & (df['volatility_regime'] <= 0)).astype(int)
+        df['bear_high_vol'] = ((df['trend_regime'] == -1) & (df['volatility_regime'] == 1)).astype(int)
+        df['sideways_low_vol'] = ((df['trend_regime'] == 0) & (df['volatility_regime'] == -1)).astype(int)
         
         # === MARKET MICROSTRUCTURE (BACKWARD-LOOKING ONLY) ===
         
@@ -233,7 +275,185 @@ class LeakFreeAlpacaDataCollector:
         # Price-volume correlation (backward-looking)
         df['price_vol_correlation'] = df['close'].rolling(20).corr(df['volume'])
         
+        # === ADVANCED FEATURES (GREEKS-INSPIRED) ===
+        
+        # Time decay and Greeks-inspired features
+        df['price_acceleration'] = df['close'].diff().diff()
+        df['price_theta'] = df['price_acceleration'] / df['close']
+        
+        # Volatility sensitivity
+        df['vol_sensitivity'] = df['volatility_20d'].diff() / df['volatility_20d'].shift(1)
+        df['delta_proxy'] = df['price_change_1d'] / (df['volatility_20d'] + 1e-8)
+        df['momentum_acceleration'] = df['delta_proxy'].diff()
+        
+        # Implied volatility proxy
+        df['implied_vol_proxy'] = (df['high'] - df['low']) / df['close']
+        df['implied_vol_change'] = df['implied_vol_proxy'].diff()
+        df['implied_vol_percentile'] = df['implied_vol_proxy'].rolling(50).rank(pct=True)
+        
+        # VIX-like volatility regime
+        df['vix_top_10pct'] = (df['vol_percentile_50d'] > 0.9).astype(int) if 'vol_percentile_50d' in df.columns else 0
+        df['vix_bottom_10pct'] = (df['vol_percentile_50d'] < 0.1).astype(int) if 'vol_percentile_50d' in df.columns else 0
+        
+        # Time to expiry proxy
+        df['time_to_expiry_proxy'] = np.arange(len(df)) % 21
+        df['theta_decay'] = df['implied_vol_proxy'] * np.sqrt(df['time_to_expiry_proxy'] / 21.0)
+        df['theta_acceleration'] = df['theta_decay'].diff()
+        
+        # Spread width features
+        df['atr_20d'] = df['hl_ratio'].rolling(20).mean()
+        df['spread_width_proxy'] = df['atr_20d'] / df['close']
+        df['move_vs_spread'] = abs(df['price_change_1d']) / (df['spread_width_proxy'] + 1e-8)
+        df['spread_efficiency'] = df['spread_width_proxy'] / (df['volatility_20d'] + 1e-8)
+        
+        # Market trend strength
+        if 'sma_50' in df.columns and 'sma_200' in df.columns:
+            df['market_trend_strength'] = abs(df['sma_50'] - df['sma_200']) / df['sma_200']
+        else:
+            df['market_trend_strength'] = 0
+        
+        # Relative strength and momentum
+        df['relative_strength'] = df['close'] / df['close'].rolling(252).mean() if len(df) >= 252 else df['close'] / df['close'].rolling(50).mean()
+        df['momentum_percentile'] = df['price_change_20d'].rolling(100).rank(pct=True)
+        
+        # === EARNINGS AND FUNDAMENTAL PROXIES ===
+        
+        # ENHANCED TEMPORAL FEATURES
+        logger.info("📅 Adding enhanced temporal features...")
+        
+        # Extract detailed time components
+        if hasattr(df.index, 'month'):
+            dates = pd.to_datetime(df.index)
+            df['month'] = dates.month
+            df['quarter'] = dates.quarter
+            df['day_of_week'] = dates.dayofweek  # 0=Monday, 6=Sunday
+            df['day_of_month'] = dates.day
+            df['week_of_year'] = dates.isocalendar().week
+            df['is_month_end'] = dates.is_month_end.astype(int)
+            df['is_quarter_end'] = dates.is_quarter_end.astype(int)
+            df['is_year_end'] = dates.is_year_end.astype(int)
+        else:
+            df['month'] = 1
+            df['quarter'] = 1
+            df['day_of_week'] = 0
+            df['day_of_month'] = 1
+            df['week_of_year'] = 1
+            df['is_month_end'] = 0
+            df['is_quarter_end'] = 0
+            df['is_year_end'] = 0
+        
+        # Trading calendar effects
+        df['is_monday'] = (df['day_of_week'] == 0).astype(int)  # Monday effect
+        df['is_friday'] = (df['day_of_week'] == 4).astype(int)  # Friday effect
+        df['is_mid_week'] = df['day_of_week'].isin([1, 2, 3]).astype(int)  # Tue-Thu
+        
+        # Monthly patterns
+        df['is_early_month'] = (df['day_of_month'] <= 10).astype(int)
+        df['is_mid_month'] = df['day_of_month'].between(11, 20).astype(int)
+        df['is_late_month'] = (df['day_of_month'] >= 21).astype(int)
+        
+        # Earnings and financial calendar
+        df['earnings_season'] = df['month'].isin([1, 4, 7, 10]).astype(int)
+        df['pre_earnings'] = df['month'].isin([12, 3, 6, 9]).astype(int)
+        
+        # Holiday and seasonal effects
+        df['is_january'] = (df['month'] == 1).astype(int)  # January effect
+        df['is_december'] = (df['month'] == 12).astype(int)  # December effect
+        df['is_summer'] = df['month'].isin([6, 7, 8]).astype(int)  # Summer doldrums
+        df['is_fall'] = df['month'].isin([9, 10, 11]).astype(int)  # Fall volatility
+        
+        # Recency weighting factors (exponential decay)
+        df['recency_weight'] = np.exp(-0.01 * np.arange(len(df))[::-1])  # More weight to recent data
+        
+        # Long-term trend context (regime persistence)
+        if 'sma_200' in df.columns:
+            df['long_term_trend'] = np.where(df['close'] > df['sma_200'], 1, 
+                                           np.where(df['close'] < df['sma_200'], -1, 0))
+            # Trend persistence
+            df['trend_duration'] = df.groupby((df['long_term_trend'] != df['long_term_trend'].shift()).cumsum()).cumcount() + 1
+        else:
+            df['long_term_trend'] = 0
+            df['trend_duration'] = 1
+        
+        logger.info(f"   📅 Added temporal features: day_of_week, month, quarter, seasonal effects")
+        logger.info(f"   ⏰ Added calendar effects: earnings seasons, holiday patterns, recency weighting")
+        
+        # Volume-price divergence
+        df['volume_price_divergence'] = df['volume_ratio'] * df['price_change_1d']
+        
+        # === PATTERN RECOGNITION ===
+        
+        # Candlestick patterns
+        df['doji'] = (abs(df['open'] - df['close']) / (df['high'] - df['low'] + 1e-8) < 0.1).astype(int)
+        df['hammer'] = ((df['close'] > df['open']) & 
+                       ((df['open'] - df['low']) > 2 * (df['close'] - df['open'])) & 
+                       ((df['high'] - df['close']) < 0.1 * (df['close'] - df['open']))).astype(int)
+        df['shooting_star'] = ((df['open'] > df['close']) & 
+                              ((df['high'] - df['open']) > 2 * (df['open'] - df['close'])) & 
+                              ((df['close'] - df['low']) < 0.1 * (df['open'] - df['close']))).astype(int)
+        
+        # === VOLATILITY CLUSTERING ===
+        
+        # GARCH-like features
+        df['vol_clustering'] = df['volatility_5d'].rolling(10).std()
+        df['vol_persistence'] = df['volatility_20d'].rolling(5).mean() / df['volatility_20d'].rolling(20).mean()
+        df['vol_skew'] = df['price_change_1d'].rolling(20).skew()
+        df['vol_kurtosis'] = df['price_change_1d'].rolling(20).apply(lambda x: x.kurtosis())
+        
+        # === LIQUIDITY FEATURES ===
+        
+        df['spread_proxy'] = (df['high'] - df['low']) / df['close']
+        df['spread_volatility'] = df['spread_proxy'].rolling(10).std()
+        df['price_impact'] = abs(df['price_change_1d']) / (df['volume'] / df['volume'].rolling(20).mean() + 1e-8)
+        df['illiquidity_proxy'] = abs(df['price_change_1d']) / (df['volume'] * df['close'] + 1e-8)
+        
+        # === MOMENTUM AND MEAN REVERSION ===
+        
+        df['momentum_3d'] = df['close'].pct_change(3)
+        df['momentum_7d'] = df['close'].pct_change(7)
+        df['momentum_14d'] = df['close'].pct_change(14)
+        df['momentum_21d'] = df['close'].pct_change(21)
+        
+        df['mean_reversion_5d'] = df['close'] / df['close'].rolling(5).mean() - 1
+        df['mean_reversion_20d'] = df['close'] / df['close'].rolling(20).mean() - 1
+        
+        # Momentum consistency
+        momentum_cols = ['momentum_3d', 'momentum_7d', 'momentum_14d', 'momentum_21d']
+        df['momentum_consistency'] = df[momentum_cols].apply(lambda x: (x > 0).sum(), axis=1)
+        
+        # === CORRELATION AND BETA ===
+        
+        market_returns = df['price_change_1d'].rolling(252).mean() if len(df) >= 252 else df['price_change_1d'].rolling(50).mean()
+        df['beta_proxy'] = df['price_change_1d'].rolling(60).cov(market_returns) / market_returns.rolling(60).var()
+        df['correlation_stability'] = df['price_change_1d'].rolling(20).corr(df['price_change_1d'].shift(1))
+        
+        # === NEWS AND SENTIMENT PROXIES ===
+        
+        df['extreme_move_up'] = (df['price_change_1d'] > df['price_change_1d'].rolling(60).quantile(0.95)).astype(int)
+        df['extreme_move_down'] = (df['price_change_1d'] < df['price_change_1d'].rolling(60).quantile(0.05)).astype(int)
+        
+        df['overnight_gap'] = (df['open'] - df['close'].shift(1)) / df['close'].shift(1)
+        df['gap_magnitude'] = abs(df['overnight_gap'])
+        df['gap_follow_through'] = df['overnight_gap'] * df['price_change_1d']
+        
+        # === COMPOSITE SIGNALS ===
+        
+        technical_signals = ['momentum_regime', 'macd_regime', 'trend_regime']
+        df['technical_strength'] = df[technical_signals].sum(axis=1)
+        
+        df['risk_adjusted_return_5d'] = df['momentum_3d'] / (df['volatility_5d'] + 1e-8)
+        df['risk_adjusted_return_20d'] = df['momentum_7d'] / (df['volatility_20d'] + 1e-8)
+        
+        quality_factors = ['trend_regime_stability']
+        if 'vol_regime_low' in df.columns:
+            quality_factors.append('vol_regime_low')
+        if 'momentum_consistency' in df.columns:
+            quality_factors.append('momentum_consistency')
+        df['quality_score'] = df[quality_factors].sum(axis=1)
+        
         logger.info(f"✅ Created {len([c for c in df.columns if c not in ['open', 'high', 'low', 'close', 'volume']])} leak-free features")
+        logger.info(f"📊 Regime features included: volatility_regime, volume_regime, macd_regime, mean_reversion_regime")
+        logger.info(f"🎯 Advanced features: Greeks-inspired, pattern recognition, volatility clustering")
         
         return df
     

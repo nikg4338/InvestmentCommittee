@@ -37,8 +37,8 @@ class ProductionModelConfig:
     """Configuration for production models."""
     primary_model_path: str = "models/production/optimized_catboost.pkl"
     backup_models: List[str] = field(default_factory=lambda: [
-        "models/production/random_forest.pkl",
-        "models/production/svm.pkl"
+        "models/production/optimized_random_forest.pkl",
+        "models/production/optimized_svm.pkl"
     ])
     threshold_config_path: str = "config/optimized_thresholds_batch_1.json"
     feature_columns: List[str] = field(default_factory=list)
@@ -144,27 +144,54 @@ class ProductionModelEnsemble:
                 self.thresholds[model_name] = 0.5
     
     def prepare_features(self, market_data: Dict[str, Any]) -> pd.DataFrame:
-        """Prepare features for model prediction."""
-        # Standard feature columns based on our training data
+        """
+        Prepare features for ML models using EXACT training data column order.
+        This ensures feature ordering matches what models were trained on.
+        """
+        # EXACT column order from training data (positions 4-117, excluding metadata columns)
         feature_columns = [
             'price_change_1d', 'price_change_5d', 'price_change_10d', 'price_change_20d',
-            'price_vs_sma5', 'price_vs_sma10', 'price_vs_sma20',
-            'volatility_5d', 'volatility_10d', 'volatility_20d',
-            'volume_ratio', 'hl_ratio', 'hl_ratio_5d',
-            'rsi_14', 'macd', 'macd_signal', 'macd_histogram', 'bb_position'
+            'sma_5', 'sma_10', 'sma_20', 'sma_50', 'sma_200',
+            'price_vs_sma5', 'price_vs_sma10', 'price_vs_sma20', 'price_vs_sma50', 'price_vs_sma200',
+            'trend_regime', 'volatility_5d', 'volatility_10d', 'volatility_20d', 'volatility_50d', 'volatility_regime',
+            'volume_sma_10', 'volume_sma_50', 'volume_ratio', 'volume_regime',
+            'hl_ratio', 'hl_ratio_5d', 'gap_up', 'gap_down', 'rsi_14', 'momentum_regime',
+            'macd', 'macd_signal', 'macd_histogram', 'macd_regime',
+            'bb_upper', 'bb_lower', 'bb_position', 'mean_reversion_regime',
+            'composite_regime_score', 'trend_regime_changes', 'trend_regime_stability',
+            'bull_low_vol', 'bear_high_vol', 'sideways_low_vol',
+            'price_acceleration', 'price_theta', 'vol_sensitivity', 'price_vol_correlation',
+            'delta_proxy', 'momentum_acceleration', 'implied_vol_proxy', 'implied_vol_change',
+            'implied_vol_percentile', 'vol_percentile_50d', 'vol_regime_high', 'vol_regime_low',
+            'vix_top_10pct', 'vix_bottom_10pct', 'time_to_expiry_proxy', 'theta_decay', 'theta_acceleration',
+            'atr_20d', 'spread_width_proxy', 'move_vs_spread', 'spread_efficiency',
+            'market_trend_strength', 'long_term_trend', 'relative_strength', 'momentum_percentile',
+            'quarter', 'month', 'earnings_season', 'volume_price_divergence',
+            'accumulation_distribution', 'accumulation_distribution_sma', 'doji', 'hammer', 'shooting_star',
+            'resistance_level', 'support_level', 'distance_to_resistance', 'distance_to_support',
+            'vol_clustering', 'vol_persistence', 'vol_skew', 'vol_kurtosis',
+            'spread_proxy', 'spread_volatility', 'price_impact', 'illiquidity_proxy',
+            'momentum_3d', 'momentum_7d', 'momentum_14d', 'momentum_21d',
+            'mean_reversion_5d', 'mean_reversion_20d', 'momentum_consistency',
+            'beta_proxy', 'correlation_stability', 'extreme_move_up', 'extreme_move_down',
+            'overnight_gap', 'gap_magnitude', 'gap_follow_through', 'technical_strength',
+            'risk_adjusted_return_5d', 'risk_adjusted_return_20d', 'quality_score',
+            'target_1d_enhanced', 'target_3d_enhanced', 'target_5d_enhanced', 'target_7d_enhanced',
+            'target_10d_enhanced', 'target_14d_enhanced', 'target_21d_enhanced'
         ]
         
-        # Extract features from market data
+        # Extract features from market data in exact order
         features = {}
         for col in feature_columns:
             features[col] = market_data.get(col, 0.0)
         
-        # Create DataFrame
-        df = pd.DataFrame([features])
+        # Create DataFrame with exact column ordering
+        df = pd.DataFrame([features], columns=feature_columns)
         
-        # Fill any missing values
-        df = df.fillna(df.median())
+        # Fill any missing values with reasonable defaults
+        df = df.fillna(0.0)
         
+        logger.debug(f"Prepared {len(feature_columns)} features in training order")
         return df
     
     def predict(self, market_data: Dict[str, Any]) -> Dict[str, float]:

@@ -1,3 +1,0 @@
-Completed in 194.9s
-Successful batches: [1]
-Failed batches: []
